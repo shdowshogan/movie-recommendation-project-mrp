@@ -1,0 +1,345 @@
+©
+A novel hybrid approach towards movie recommender systems
+Dushyant Bahl *
+Vaibhav Kain †
+Akshay Sharma §
+Mugdha Sharma ‡
+Department of Computer Science & Engineering
+Bhagwan Parshuram Institute of Technology
+Sector 17, Rohini
+New Delhi 110089
+India
+Abstract
+Collaborative and content-based filtering are the majorly used approaches towards
+implementing recommender systems which can successfully predict the item(s) to be
+recommended to users based upon their preferences. Each of the methods has its own
+advantages and disadvantages that are specific to the situation they are used in. The hybrid
+approach aims to combine both techniques in multiple ways to optimize results and overcome
+shortcomings. In this paper, we propose a hybrid approach based recommendation engine to
+improve accuracy. While content based recommendations are made on the similarity of items’
+attributes, collaborative recommendations are based on similarity of users. Collaborative
+filtering is achieved by matrix factorization technique. One of the most effective algorithms
+for matrix factorization: Singular Value Decomposition (SVD) has been used to perform
+collaborative filtering and combined with content based model to predict the item ratings
+per user. The paper aims to achieve the final result with minimum possible errors as per user
+preferences and recommended items.
+Subject Classification: 68-00; 68P15.
+Keywords: Recommender systems, Collaborative filtering, content-based filtering, Hybrid approach,
+Singular Value Decomposition.
+*E-mail: dushyant.bahl97@gmail.com (Corresponding Author)
+†E-mail: vaibkn@gmail.com
+§E-mail: akshay.akshaysharma7@gmail.com
+‡E-mail: mugdha.sharma145@gmail.com
+Journal of Statistics & Management Systems
+ISSN 0972-0510 (Print), ISSN 2169-0014 (Online)
+Vol. 23 (2020), No. 6, pp. 1049–1058
+DOI : 10.1080/09720510.2020.1799503
+1050 D. BAHL, V. KAIN, A. SHARMA AND M. SHARMA
+1. Introduction
+Recommendation engines have become an instrumental part of the
+online user experience and with the effort to automate such tasks, intelligent
+recommendation systems have risen to a high demand. Due to such high
+demand and its practical usage, recommendation systems remain an active
+area of interest. Originally, the two major and vastly used techniques of
+implementing recommendation engines were collaborative filtering (CF)
+and content-based filtering (CBF) [2]. Hybrid recommendation systems
+fuse multiple recommendation strategies in order to fare better than the
+case where each model or technique is used independently. Thus, to
+create effective hybrid recommender systems, we need to combine both
+the collaborative and content based recommendation strategies.
+1.1 Collaborative Filtering
+The CF technique is the most widely used approach to create
+recommendation systems especially for large datasets [3][4]. CF uses the
+ratings of a group of users to predict and suggest items to another group
+of users who happen to have similar preferences as the group whose item
+ratings had been considered. The proposed model uses Singular Value
+Decomposition(SVD) as a matrix factorization technique to produce a
+predicted rating of the original movie rating dataset and deal with the
+sparsity problem that is faced by most CF based recommender systems [1]
+1.2 Content Based Filtering
+Content based systems use the metadata of items to filter out the list
+of most similar items to the one entered by the user. The metadata in case
+of movie recommendation systems can be genre, cast, director, keywords
+etc. Unlike the collaborative filtering engines which include both item
+similarity and user similarity, content based recommender engines work
+only on item similarity.
+2. Background
+A variety of research work has been done in the domain of
+recommender system which has been published in various journal
+publications. High quality journals were studied for the purpose of
+literature review of the proposed study [19]. With the recent advancements
+in e commerce transactions, online content streaming services and news
+portals, there is a vast amount of data to be handled per user. This huge
+HYBRID APPROACH TOWARDS MOVIE RECOMMENDER SYSTEMS 1051
+amount of available information over web based platforms gave rise to a
+need for development of systems that filter out the irrelevant information
+and select the content that the user needs or prefers to consume [6].
+Such systems which automate this task of filtering out the irrelevant
+information and display selected content to users are broadly known as
+recommendation engines. Automated recommendations have become a
+prevalent feature of our online user experience [2].
+Hybrid recommendation engines vary according to the combination
+achieved among basic recommendation approaches. Following are some
+of the approaches which have been applied for synthesizing hybrid
+engines:
+Substitution Method: This method states that recommendation is
+made primarily on the basis of collaborative filter, but uses content based
+filter when collaborative filtering predictions cannot be made [6].
+Hybrid switching approach: Here, again the primary
+recommendations are made collaboratively. In such cases if the numbers
+of ratings fall below a threshold value such that collaborative filtering
+becomes redundant for that item, content based filtering is brought into
+the equation [6].
+KNN based Approach: Hybrid recommendation systems can also
+be made scalable using clustering algorithms. Basic predictors can be
+combined with KNN collaborative approach to reduce the error metrics
+and improve timing of recommendation models [7].
+Almost all of the hybrid recommendation models extensively
+use collaborative filtering as an instrumental part of the whole engine.
+Theoretically it is one of the most effective approaches, but faces problems
+when applied to real life scenarios.
+Genetic Algorithm Approach: A novel genetic algorithm based on
+recommender system has been proposed by [16] where authors have
+proposed that the acceptability of query recommendations in any search
+engine vary from person to person and thus proposed a personalized
+algorithm for query recommendation which can be used in search engines.
+Problem with conventional Collaborative Filtering: Collaborative
+filtering recommends items according to the ratings given by users to
+items. Higher the number of ratings, better will be the recommendations.
+In reality, users cannot rate all the items in the dataset, thus there are a
+large number of items that are never rated. Such a situation will generate
+a high-dimension sparse user-item matrix and the similarity calculated
+by this matrix will not be accurate [17]. Increased sparsity of the matrix
+makes it difficult to produce effective recommendations [3][5]. Hence
+1052 D. BAHL, V. KAIN, A. SHARMA AND M. SHARMA
+data sparsity is an important factor in determining the performance of a
+recommendation system [1][9].
+One of the effective solutions to this problem is to decrease the number
+of dimensions in the matrix to decrease the sparsity in it [10][18]. Singular
+Value Decomposition (SVD) is one of the most practical and scalable
+methods to deal with the shortcomings of collaborative recommendation
+systems[11][12].
+Evaluation Metrics: To measure the error of the proposed model, Root
+Mean Square Error and Mean Absolute Error have been used. Both RMSE
+and MAE are calculated on real ratings vs predictions. The predictions of
+the recommendation system are more accurate if the error values are as
+low as possible [8].
+3. Proposed Recommendation System
+The proposed movie recommendation system works towards
+combining the content based and collaborative approaches to create
+a hybrid engine. The proposed model will not only create a hybrid
+recommendation system, but will also be able to predict the ratings of
+recommended movies for a particular user, bringing in an even higher
+degree of personalization to the recommendation model.
+3.1 Content Based Filter
+The content based filter in the recommendation system will take
+into account the Genre of a particular movie from the movie dataset. The
+proposed model uses cosine similarity to filter in the most similar movies
+to the input taken in.
+Cosine similarity is a mathematical technique which measures how
+similar items are. The cosine value of angle between two vectors projected
+in a multidimensional space, is calculated. The filter will then calculate
+the similarity of the entered movie with other movies in the dataset. After
+performing the calculation, a list of the most similar movies based on Genre
+is returned. Following is the formula for calculating cosine similarity:
+1
+2 2
+1 1
+( , ) (1)
+n
+i i
+i
+n n
+i i
+i i
+A B
+A B
+similarity A B A B
+A B
+=
+= =
+×
+⋅
+= =
+|| || × || ||
+×
+∑
+∑ ∑
+HYBRID APPROACH TOWARDS MOVIE RECOMMENDER SYSTEMS 1053
+Here A and B are the two vectors between whom the similarity is
+calculated. Graphically, the cosine similarity can be represented as shown
+in figure 1 below:
+Fig. 1
+Graphical Representation of Cosine Similarity
+3.2 Collaborative Filter
+Collaborative filtering is the process of filtering item based on
+the collaboration among multiple users. It is the most widely used
+recommendation approach and used for applications involving large
+datasets. It can also help a user improve his/her area of preference by
+recommending items that are different than those previously used but are
+yet relevant.
+3.3 Singular Value Decomposition (SVD)
+SVD is a matrix factorization method which gained popularity
+recently because of its approach to the sparsity problem in matrices,
+which is one of the major concerns while working on CF systems. The SVD
+algorithm works upon a matrix say A, it states that A can be factorized as
+follows:
+A = USVT (2)
+Here, the orthogonal matrices U and V consist of orthonormal
+eigenvectors taken from AAT and ATA respectively. The diagonal matrix S
+1054 D. BAHL, V. KAIN, A. SHARMA AND M. SHARMA
+has r elements such that they are equal to the eigenvalues of AAT or AT A
+(both matrices have the same positive eigenvalues anyway). The elements
+of diagonals are singular values in nature.
+ie. an m × n matrix can be factorized as:
+Amxn= Umxm Smxn VT
+nxn (3)
+The eigenvectors can be arranged in different combinations for
+making U and V. To standardize the solution the eigenvectors are ordered
+such that the vectors are arranged in descending order of eigenvalues. U
+and V are orthonormal and can even be inverted. It is also important to
+note that eigenvalues are less stable as compared to numerical values.
+3.4 Hybrid Filter
+The content and collaborative filters are combined to form a hybrid
+filter that uses SVD to perform collaborative filtering and aims to perform
+better than switching and substitute hybrid recommendation systems.
+3.5 Algorithm of the proposed system
+Algorithm: Novel Hybrid Movie Recommendation System
+Input: Input variable user Œ ratings_dataset9742x7 type Integer,
+variable movie Œ movies_dataset100836x4 type String.
+Output: List Res Œ movies_dataset100836x4.
+1: import dataset ‘movies.csv’ and ‘ratings.csv’
+2: initialize Dataframe movies_dataset ← movies.csv
+3: initialize tfid ← TfidfVectorizer(stop_words=’english’)
+4: initialize matrix ← tfid.fit_transform(movies_dataset[‘new’])
+5: initialize cosine_sim ← cosine_similarity(matrix,matrix)
+6: initialize svd ← SVD(n_factors)
+7: initialize train ← dataset.build_full_trainset()
+8: svd.fit(train)
+9: define function recommendation(user id, movie):
+10: movie_id ← [i[0] for i in similarity_scores]
+11: for id← 0 to length(movie_id) do
+12: ratings ← ratings_dataset[ratings_dataset[‘movieId’]=movie_
+id[id]][‘rating’]
+13: initialize avg_ratings ←numpy.mean(ratings)
+14: predicted_ratings←svd.predict(user_id,movie_id[id])
+15: result.append([titles[movie_id[id]])
+16: return result
+17: end function
+HYBRID APPROACH TOWARDS MOVIE RECOMMENDER SYSTEMS 1055
+4. Experimental Setup
+For this study, the Movielens 100K dataset has been used for both
+training and testing purposes. The dataset comprises of a 5-point rating
+system, 5 being the highest rating that can be given to the movie. The
+dataset which has 10004 movie ratings covering a total of 9125 movies,
+was created upon a user base of 671 users. It was collected between 9th
+January 1995 and 16th October 2016 and was generated for research
+purposes on 17th October 2016. At least 20 movies have been rated by
+each user. Each user in the dataset is represented by a user id.
+The whole flowchart of the proposed approach is dictated in the
+figure 2 below:
+First, a content based filter is created on the basis of genre of each
+movie. Then, a collaborative filter is created on the dataset. Finally, a
+hybrid engine is made by first implementing the CB recommendations
+and then SVD is applied to the result obtained from content based filter in
+order to obtain predicted ratings along with recommendations.
+Results
+RMSE and MAE have been used as evaluation metrics as the dataset
+has explicitly rated items. Both the metrics are calculated for different
+approaches and comparison with the proposed approach has been shown
+in figure 3 and figure 4 below. The RMSE function is applied on the
+predicted ratings to find out the difference between predicted ratings and
+the ratings given explicitly by the user in consideration. Lower the error
+values, higher is the efficiency of the model.
+The above mentioned KNN clustering based, switching and
+substituting techniques of hybrid model suffer from shortcomings such
+as sparsity problem and cold start problem. The proposed model deals
+with these problems to a considerable extent. Also, the switching and
+substituting approaches cannot be applied to scalable levels because of
+Fig. 2
+Flowchart of the proposed model
+1056 D. BAHL, V. KAIN, A. SHARMA AND M. SHARMA
+the time taken to compute recommendations. For a large user base, the
+chances of KNN based models producing inaccurate results increases; this
+is not the case with SVD based models. In fact, the performance of SVD
+based models increases with the increase in user-item information.
+5. Conclusion and Future Scope
+The proposed model successfully combined the two major item
+filtering techniques and applied SVD to predict movie ratings per user.
+It not only improves upon sparsity problem, it was also able to provide
+personalized recommendations to users according to their taste.
+The performance of the model was measured in terms of RMSE and
+MAE. The model reduced the RMSE and MAE values to a desirable level
+that can be used in large scalable applications. It also performed better
+than simple collaborative filtering approach and other hybrid approaches
+in terms of RMSE and MAE values.
+The proposed model provides personalized recommendations but
+there is still scope for providing an understandable explanation to the user
+behind the recommendations. Recommendations should also be able to
+help a group of people rather than a single person.
+Fig. 3
+Graph to depict comparison of
+the proposed model with existing
+models in terms of MAE
+Fig. 4
+Comparison of RMSE values
+of proposed model and other
+approaches
+HYBRID APPROACH TOWARDS MOVIE RECOMMENDER SYSTEMS 1057
+References
+[1] Dou, Y., Yang, H., & Deng, X. (2016). A Survey of Collaborative Fil-
+tering Algorithms for Social Recommender Systems. 12th Interna-
+tional Conference on Semantics, Knowledge and Grids (SKG).
+[2] Lops, P., Jannach, D., Musto, C. et al.Trends in Content based Recom-
+mendation Systems User Model User-Adap Inter (2019) 29: 239
+[3] Alharthi, H., & Inkpen, D. (2015). Content-Based Recommender Sys-
+tem Enriched with Wordnet Synsets. Lecture Notes in Computer Sci-
+ence, 295–308
+[4] Burke, R.: Hybrid Recommender Systems: Survey and Experiments.
+User Modeling and User-Adapted Interaction 12(4), 331–370 (2002)
+[5] Su, X., Khoshgoftaar, T.M.: A Survey of Collaborative Filtering Tech-
+niques. Advances in Artificial Intelligence (4), 2 (2009)
+[6] Lekakos, G., & Caravelas, P. (2006). A hybrid approach for movie
+recommendation. Multimedia Tools and Applications, 36(1-2), 55–70
+[7] Ignat’ev, V.Y., Lemtyuzhnikova, D.V., Rul’, D.I. et al. J. Comput. Syst.
+Sci. Int. (2018) 57: 921
+[8] Yuan-hong, Wu & Xiao-qiu, Tan. (2010). A real-time recommender
+system based on hybrid collaborative filtering. ICCSE 2010 - 5th In-
+ternational Conference on Computer Science and Education, Final
+Program and Book of Abstracts.
+[9] H.W. Ma, G.W. Zhang, P, Li, “Survey of Collaborative Filtering Al-
+gorithms,” Journal of Chinese Computer Systems, 2009, 30(7), pp. 1282-
+1288
+[10] J.T. Du, “A Study on Recommendation Model Based on Rough Set,”
+Hangzhou Dianzi University, 2009
+[11] B. Sarwar, G. Karypis, J. Konstan. 2000. Analysis of Recommenda-
+tion Algorithms for E-commerce. Proceedings of ACM Conference
+on Electronic Commerce, pp. 158-167
+[12] M.G. Vozalis, K.G. Margaritis, “Applying SVD on Item-Based Filter-
+ing,” Proceedings of 5th International Conference on Intelligent Sys-
+tems Design and Applications, 2005, pp. 464-469
+[13] Sharifi, Z., Rezghi, M., & Nasiri, M. (2013). New algorithm for rec-
+ommender systems based on singular value decomposition method.
+ICCKE 2013
+1058 D. BAHL, V. KAIN, A. SHARMA AND M. SHARMA
+[14] Ariyoshi, Y., & Kamahara, J. (2010). A Hybrid Recommendation
+Method with Double SVD Reduction. Lecture Notes in Computer Sci-
+ence, 365–373
+[15] https://movielens.org/ for the 100k dataset used in the experiment
+[16] Debaditya Barman, Ritam Sarkar, Anil Tudu & Nirmalya Chowd-
+hury (2020). Personalized query recommendation system: A genetic
+algorithm approach, Journal of Interdisciplinary Mathematics, 23:2, 523-
+535.
+[17] Poonam Singh, Sachin Ahuja, Vanita Jaitly & Shaily Jain (2020). A
+framework to alleviate common problems from recommender sys-
+tem : A case study for technical course recommendation, Journal of
+Discrete Mathematical Sciences and Cryptography, 23:2, 451-460.
+[18] A. Lesfari (2018). Normally generated line bundle and laurent se-
+ries solutions of nonlinear differential equations, Journal of Dynamical
+Systems and Geometric Theories, 16:2, 151-171.
+[19] Shakil Ahmad, Md Sohail, Abu Waris, Isam Mohammed Ab-
+del-Magid, Abdurahiman Pattukuthu & Muhammed Shakir
+Azad (2019). Evaluating journal quality: A review of journal cita-
+tion indicators and ranking in library and information science core
+journals, COLLNET Journal of Scientometrics and Information Manage-
+ment, 13:2, 345-363.
