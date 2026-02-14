@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# ML data/artifacts
+ml/data/
+ml/artifacts/
+
+# Node/Next.js
+client/node_modules/
+client/.next/
+client/out/
+
+# OS
+.DS_Store
+Thumbs.db
