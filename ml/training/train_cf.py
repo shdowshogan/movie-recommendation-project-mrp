@@ -4,6 +4,8 @@ import pickle
 from pathlib import Path
 
 import numpy as np
+from scipy.sparse import csr_matrix
+from sklearn.decomposition import TruncatedSVD
 
 from ml.config import ARTIFACTS_DIR, MODEL_FILE, MIN_RATINGS_PER_USER, RATINGS_FILE, SVD_RANK
 from ml.training.io import filter_sparse_users, load_ratings_csv
@@ -24,67 +26,72 @@ def build_mappings(
     return user_index, item_index
 
 
-def build_matrix(
+def build_sparse_matrix(
     ratings: list[tuple[str, str, float]],
     user_index: dict[str, int],
     item_index: dict[str, int],
-) -> tuple[np.ndarray, np.ndarray, dict[int, set[int]]]:
+) -> tuple[csr_matrix, np.ndarray, np.ndarray, np.ndarray, dict[int, set[int]]]:
     num_users = len(user_index)
     num_items = len(item_index)
-    matrix = np.zeros((num_users, num_items), dtype=np.float32)
-    mask = np.zeros((num_users, num_items), dtype=bool)
+    rows = np.empty(len(ratings), dtype=np.int32)
+    cols = np.empty(len(ratings), dtype=np.int32)
+    data = np.empty(len(ratings), dtype=np.float32)
     rated_items: dict[int, set[int]] = {}
 
-    for user_id, movie_id, rating in ratings:
+    for idx, (user_id, movie_id, rating) in enumerate(ratings):
         u_idx = user_index[user_id]
         i_idx = item_index[movie_id]
-        matrix[u_idx, i_idx] = rating
-        mask[u_idx, i_idx] = True
+        rows[idx] = u_idx
+        cols[idx] = i_idx
+        data[idx] = rating
         rated_items.setdefault(u_idx, set()).add(i_idx)
 
-    return matrix, mask, rated_items
+    matrix = csr_matrix((data, (rows, cols)), shape=(num_users, num_items))
+    return matrix, rows, cols, data, rated_items
 
 
-def compute_means(matrix: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-    num_users, num_items = matrix.shape
-    user_means = np.zeros(num_users, dtype=np.float32)
-    item_means = np.zeros(num_items, dtype=np.float32)
+def compute_means(
+    rows: np.ndarray,
+    cols: np.ndarray,
+    data: np.ndarray,
+    num_users: int,
+    num_items: int,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    rating_count = int(data.size)
+    global_mean = float(data.mean()) if rating_count else 0.0
 
-    rating_sum = float(matrix[mask].sum())
-    rating_count = int(mask.sum())
-    global_mean = rating_sum / rating_count if rating_count else 0.0
+    user_sum = np.bincount(rows, weights=data, minlength=num_users).astype(np.float32)
+    user_count = np.bincount(rows, minlength=num_users).astype(np.float32)
+    user_means = np.full(num_users, global_mean, dtype=np.float32)
+    np.divide(user_sum, user_count, out=user_means, where=user_count > 0)
 
-    for u_idx in range(num_users):
-        if mask[u_idx].any():
-            user_means[u_idx] = matrix[u_idx][mask[u_idx]].mean()
-        else:
-            user_means[u_idx] = global_mean
-
-    for i_idx in range(num_items):
-        if mask[:, i_idx].any():
-            item_means[i_idx] = matrix[:, i_idx][mask[:, i_idx]].mean()
-        else:
-            item_means[i_idx] = global_mean
+    item_sum = np.bincount(cols, weights=data, minlength=num_items).astype(np.float32)
+    item_count = np.bincount(cols, minlength=num_items).astype(np.float32)
+    item_means = np.full(num_items, global_mean, dtype=np.float32)
+    np.divide(item_sum, item_count, out=item_means, where=item_count > 0)
 
     return user_means, item_means, global_mean
 
 
 def train_svd(
-    matrix: np.ndarray,
-    mask: np.ndarray,
+    matrix: csr_matrix,
+    rows: np.ndarray,
+    cols: np.ndarray,
+    data: np.ndarray,
     rank: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    user_means, _item_means, _global_mean = compute_means(matrix, mask)
-    centered = matrix - user_means[:, None]
-    centered[~mask] = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
+    num_users, num_items = matrix.shape
+    user_means, _item_means, _global_mean = compute_means(rows, cols, data, num_users, num_items)
 
-    u_mat, s_vals, v_mat = np.linalg.svd(centered, full_matrices=False)
-    k = min(rank, s_vals.shape[0])
-    return (
-        u_mat[:, :k].astype(np.float32),
-        s_vals[:k].astype(np.float32),
-        v_mat[:k, :].astype(np.float32),
-    )
+    centered_data = data - user_means[rows]
+    centered = csr_matrix((centered_data, (rows, cols)), shape=matrix.shape)
+
+    max_rank = max(1, min(num_users, num_items) - 1)
+    k = min(rank, max_rank)
+    svd = TruncatedSVD(n_components=k, random_state=42)
+    user_factors = svd.fit_transform(centered).astype(np.float32)
+    item_factors = svd.components_.astype(np.float32)
+    return user_factors, item_factors
 
 
 def save_model(path: Path, model: dict) -> None:
@@ -100,9 +107,15 @@ def main() -> None:
         raise ValueError("No ratings available after filtering")
 
     user_index, item_index = build_mappings(ratings)
-    matrix, mask, rated_items = build_matrix(ratings, user_index, item_index)
-    user_means, item_means, global_mean = compute_means(matrix, mask)
-    u_mat, s_vals, v_mat = train_svd(matrix, mask, SVD_RANK)
+    matrix, rows, cols, data, rated_items = build_sparse_matrix(ratings, user_index, item_index)
+    user_means, item_means, global_mean = compute_means(
+        rows,
+        cols,
+        data,
+        matrix.shape[0],
+        matrix.shape[1],
+    )
+    user_factors, item_factors = train_svd(matrix, rows, cols, data, SVD_RANK)
 
     index_user = {idx: user_id for user_id, idx in user_index.items()}
     index_item = {idx: movie_id for movie_id, idx in item_index.items()}
@@ -113,9 +126,8 @@ def main() -> None:
         "item_index": item_index,
         "index_user": index_user,
         "index_item": index_item,
-        "U": u_mat,
-        "S": s_vals,
-        "Vt": v_mat,
+        "user_factors": user_factors,
+        "item_factors": item_factors,
         "user_means": user_means,
         "item_means": item_means,
         "global_mean": global_mean,

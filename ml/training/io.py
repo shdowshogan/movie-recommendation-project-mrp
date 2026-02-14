@@ -15,8 +15,8 @@ def load_ratings_csv(path: Path) -> list[tuple[str, str, float]]:
         if reader.fieldnames is None:
             raise ValueError("ratings.csv must include a header row")
         for row in reader:
-            user_id = (row.get("user_id") or "").strip()
-            movie_id = (row.get("movie_id") or "").strip()
+            user_id = (row.get("user_id") or row.get("userId") or "").strip()
+            movie_id = (row.get("movie_id") or row.get("movieId") or "").strip()
             rating_raw = (row.get("rating") or "").strip()
             if not user_id or not movie_id or not rating_raw:
                 continue
