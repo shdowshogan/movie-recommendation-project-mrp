@@ -60,9 +60,9 @@ def ingest(limit: int | None, sleep_s: float) -> None:
         raise FileNotFoundError(f"movies file not found: {MOVIES_FILE}")
 
     with engine.begin() as conn:
-        existing = conn.execute(movielens_tmdb_map.select())
-        mapped = {row.movielens_movie_id for row in existing}
-        mapped_tmdb = {row.tmdb_id for row in existing}
+        existing_rows = list(conn.execute(movielens_tmdb_map.select()))
+        mapped = {row.movielens_movie_id for row in existing_rows}
+        mapped_tmdb = {row.tmdb_id for row in existing_rows}
 
     count = 0
     errors = 0
