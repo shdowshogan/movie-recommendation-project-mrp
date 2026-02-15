@@ -110,7 +110,7 @@ def _poster_url_for_tmdb(tmdb_id: int) -> str | None:
     if not poster_path:
         _POSTER_CACHE[tmdb_id] = None
         return None
-    url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+    url = f"https://image.tmdb.org/t/p/w342{poster_path}"
     _POSTER_CACHE[tmdb_id] = url
     return url
 

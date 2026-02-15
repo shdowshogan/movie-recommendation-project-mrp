@@ -14,12 +14,14 @@ type HybridRec = {
   cf_score: number;
   hybrid_score?: number | null;
   title?: string | null;
+  poster_url?: string | null;
 };
 
 type SeedRec = {
   movie_id: string;
   content_score: number;
   title?: string | null;
+  poster_url?: string | null;
 };
 
 const heroPicks = [
@@ -370,7 +372,17 @@ export default function Home() {
                     key={item.movie_id}
                     className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
                   >
-                    <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                    <div className="aspect-[2/3] overflow-hidden rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
+                      {item.poster_url ? (
+                        <img
+                          src={item.poster_url}
+                          alt={item.title || "Recommendation"}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      ) : null}
+                    </div>
                     <div className="space-y-1">
                       <p className="text-sm font-semibold">
                         {item.title || `Movie ${item.movie_id}`}
@@ -412,7 +424,17 @@ export default function Home() {
                       key={item.movie_id}
                       className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
                     >
-                      <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                      <div className="aspect-[2/3] overflow-hidden rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
+                        {item.poster_url ? (
+                          <img
+                            src={item.poster_url}
+                            alt={item.title || "Seed recommendation"}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        ) : null}
+                      </div>
                       <div className="space-y-1">
                         <p className="text-sm font-semibold">
                           {item.title || `Movie ${item.movie_id}`}
