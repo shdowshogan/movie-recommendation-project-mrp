@@ -70,8 +70,21 @@ class SeedRecommendation(BaseModel):
     poster_url: str | None = None
 
 
+class SeedHybridRecommendation(BaseModel):
+    movie_id: str
+    content_score: float
+    cf_score: float
+    hybrid_score: float
+    title: str | None = None
+    poster_url: str | None = None
+
+
 class SeedRecommendationResponse(BaseModel):
     results: list[SeedRecommendation]
+
+
+class SeedHybridRecommendationResponse(BaseModel):
+    results: list[SeedHybridRecommendation]
 
 
 class HybridRecommendationResponse(BaseModel):
@@ -255,6 +268,112 @@ def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse
                 entry["poster_url"] = _poster_url_for_tmdb(tmdb_id)
 
     return SeedRecommendationResponse(results=results)
+
+
+@app.post("/recommendations/seed-hybrid", response_model=SeedHybridRecommendationResponse)
+def get_seed_hybrid_recommendations(payload: SeedRequest) -> SeedHybridRecommendationResponse:
+    if _HYBRID is None or _MODEL is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    if _ENGINE is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    if not payload.tmdb_ids:
+        raise HTTPException(status_code=400, detail="tmdb_ids is required")
+
+    mapped_tmdb_ids = set()
+    with _ENGINE.begin() as conn:
+        rows = conn.execute(
+            select(
+                movielens_tmdb_map.c.movielens_movie_id,
+                movielens_tmdb_map.c.tmdb_id,
+            ).where(movielens_tmdb_map.c.tmdb_id.in_(payload.tmdb_ids))
+        )
+        movielens_ids = []
+        for row in rows:
+            movielens_ids.append(int(row.movielens_movie_id))
+            mapped_tmdb_ids.add(int(row.tmdb_id))
+
+    missing_tmdb_ids = [mid for mid in payload.tmdb_ids if mid not in mapped_tmdb_ids]
+    text_profile = None
+    if missing_tmdb_ids:
+        if _TMDB is None:
+            raise HTTPException(status_code=503, detail="TMDB API key not configured")
+        texts = []
+        for tmdb_id in missing_tmdb_ids:
+            bundle = _TMDB.fetch_movie_bundle(tmdb_id)
+            text_parts = [
+                str(bundle.get("title") or ""),
+                " ".join(bundle.get("genres") or []),
+                " ".join(bundle.get("cast") or []),
+                str(bundle.get("director") or ""),
+                " ".join(bundle.get("keywords") or []),
+                str(bundle.get("overview") or ""),
+            ]
+            texts.append(" ".join(part for part in text_parts if part).strip().lower())
+        text_profile = _HYBRID.content.profile_from_texts(texts)
+
+    mapped_profile = _HYBRID.content.profile_from_movie_ids(movielens_ids)
+    if mapped_profile is None and text_profile is None:
+        raise HTTPException(status_code=404, detail="No content profile available")
+
+    if mapped_profile is None:
+        profile = text_profile
+    elif text_profile is None:
+        profile = mapped_profile
+    else:
+        profile = normalize(mapped_profile + text_profile)
+
+    content_results = _HYBRID.content.recommend_from_profile(
+        profile,
+        n=payload.n,
+        exclude_movie_ids=movielens_ids,
+    )
+
+    if not content_results:
+        return SeedHybridRecommendationResponse(results=[])
+
+    movie_ids = [entry["movie_id"] for entry in content_results]
+    cf_scores = []
+    for movie_id in movie_ids:
+        try:
+            idx = _MODEL.item_index.get(movie_id)
+            if idx is None:
+                cf_scores.append(_MODEL.global_mean)
+            else:
+                cf_scores.append(float(_MODEL.item_means[idx]))
+        except Exception:
+            cf_scores.append(_MODEL.global_mean)
+
+    min_cf = min(cf_scores)
+    max_cf = max(cf_scores)
+    if max_cf == min_cf:
+        cf_norm = [1.0 for _ in cf_scores]
+    else:
+        cf_norm = [(score - min_cf) / (max_cf - min_cf) for score in cf_scores]
+
+    results = []
+    for entry, cf_score, cf_scaled in zip(content_results, cf_scores, cf_norm):
+        hybrid_score = 0.7 * cf_scaled + 0.3 * float(entry["content_score"])
+        results.append(
+            {
+                "movie_id": entry["movie_id"],
+                "content_score": float(entry["content_score"]),
+                "cf_score": cf_score,
+                "hybrid_score": float(hybrid_score),
+            }
+        )
+
+    if _MODEL._movie_titles is not None:
+        for entry in results:
+            entry["title"] = _MODEL._movie_titles.get(entry["movie_id"], "")
+
+    tmdb_map = _map_movielens_to_tmdb([entry["movie_id"] for entry in results])
+    if tmdb_map:
+        for entry in results:
+            tmdb_id = tmdb_map.get(entry["movie_id"])
+            if tmdb_id:
+                entry["poster_url"] = _poster_url_for_tmdb(tmdb_id)
+
+    return SeedHybridRecommendationResponse(results=results)
 
 
 @app.get("/recommendations/{user_id}", response_model=RecommendationResponse)

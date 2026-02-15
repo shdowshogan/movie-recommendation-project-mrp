@@ -20,6 +20,8 @@ type HybridRec = {
 type SeedRec = {
   movie_id: string;
   content_score: number;
+  cf_score?: number | null;
+  hybrid_score?: number | null;
   title?: string | null;
   poster_url?: string | null;
 };
@@ -62,6 +64,7 @@ export default function Home() {
   const [seedLoading, setSeedLoading] = useState(false);
   const [seedResults, setSeedResults] = useState<SeedRec[]>([]);
   const [seedError, setSeedError] = useState<string | null>(null);
+  const [seedMode, setSeedMode] = useState<"hybrid" | "content">("hybrid");
 
   const selectedIds = useMemo(
     () => new Set(selected.map((item) => item.tmdb_id)),
@@ -146,7 +149,11 @@ export default function Home() {
     setSeedLoading(true);
     setSeedError(null);
     try {
-      const resp = await fetch(`${API_BASE}/recommendations/seed`, {
+      const endpoint =
+        seedMode === "hybrid"
+          ? `${API_BASE}/recommendations/seed-hybrid`
+          : `${API_BASE}/recommendations/seed`;
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -408,6 +415,30 @@ export default function Home() {
                 </p>
                 <h3 className="text-xl font-semibold">Taste-Based Results</h3>
               </div>
+              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
+                <button
+                  onClick={() => setSeedMode("hybrid")}
+                  disabled={seedLoading}
+                  className={`cursor-pointer rounded-full px-3 py-1 ${
+                    seedMode === "hybrid"
+                      ? "bg-[color:var(--accent)] text-black"
+                      : "text-[color:var(--muted)]"
+                  }`}
+                >
+                  Hybrid
+                </button>
+                <button
+                  onClick={() => setSeedMode("content")}
+                  disabled={seedLoading}
+                  className={`cursor-pointer rounded-full px-3 py-1 ${
+                    seedMode === "content"
+                      ? "bg-[color:var(--accent)] text-black"
+                      : "text-[color:var(--muted)]"
+                  }`}
+                >
+                  Content
+                </button>
+              </div>
             </div>
             <div className="grid gap-4 md:grid-cols-5">
               {seedResults.length === 0
@@ -448,7 +479,9 @@ export default function Home() {
                           {item.title || `Movie ${item.movie_id}`}
                         </p>
                         <p className="text-xs text-[color:var(--muted)]">
-                          Content {item.content_score.toFixed(3)}
+                          {seedMode === "hybrid"
+                            ? `Hybrid ${item.hybrid_score?.toFixed(3) ?? "--"}`
+                            : `Content ${item.content_score.toFixed(3)}`}
                         </p>
                       </div>
                     </div>
