@@ -381,7 +381,11 @@ export default function Home() {
                           loading="lazy"
                           decoding="async"
                         />
-                      ) : null}
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-black/40 text-[10px] uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                          No poster
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <p className="text-sm font-semibold">
@@ -433,7 +437,11 @@ export default function Home() {
                             loading="lazy"
                             decoding="async"
                           />
-                        ) : null}
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-black/40 text-[10px] uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                            No poster
+                          </div>
+                        )}
                       </div>
                       <div className="space-y-1">
                         <p className="text-sm font-semibold">
