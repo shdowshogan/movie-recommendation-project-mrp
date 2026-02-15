@@ -51,3 +51,30 @@ class ContentRecommender:
         score_list = np.asarray(scores).ravel().astype(np.float32)
         movie_ids = [self.movie_ids[idx] for idx in idx_list]
         return {movie_id: float(score) for movie_id, score in zip(movie_ids, score_list)}
+
+    def recommend_from_profile(
+        self,
+        profile: csr_matrix,
+        n: int,
+        exclude_movie_ids: Iterable[int] | None = None,
+    ) -> list[dict[str, float]]:
+        if n <= 0:
+            return []
+
+        scores = self.matrix_norm @ profile.T
+        score_list = np.asarray(scores).ravel().astype(np.float32)
+
+        if exclude_movie_ids:
+            for movie_id in exclude_movie_ids:
+                idx = self.movie_index.get(movie_id)
+                if idx is not None:
+                    score_list[idx] = -np.inf
+
+        n = min(n, score_list.size)
+        top_idx = np.argpartition(-score_list, n - 1)[:n]
+        top_idx = sorted(top_idx, key=lambda idx: score_list[idx], reverse=True)
+
+        return [
+            {"movie_id": str(self.movie_ids[idx]), "content_score": float(score_list[idx])}
+            for idx in top_idx
+        ]

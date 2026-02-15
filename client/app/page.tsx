@@ -16,6 +16,12 @@ type HybridRec = {
   title?: string | null;
 };
 
+type SeedRec = {
+  movie_id: string;
+  content_score: number;
+  title?: string | null;
+};
+
 const heroPicks = [
   "The Matrix (1999)",
   "Inception (2010)",
@@ -50,6 +56,10 @@ export default function Home() {
   const [hybridLoading, setHybridLoading] = useState(false);
   const [hybridResults, setHybridResults] = useState<HybridRec[]>([]);
   const [hybridError, setHybridError] = useState<string | null>(null);
+
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [seedResults, setSeedResults] = useState<SeedRec[]>([]);
+  const [seedError, setSeedError] = useState<string | null>(null);
 
   const selectedIds = useMemo(
     () => new Set(selected.map((item) => item.tmdb_id)),
@@ -126,9 +136,37 @@ export default function Home() {
     }
   };
 
+  const generateFromSeeds = async () => {
+    if (selected.length < 3) {
+      setSeedError("Pick at least 3 movies.");
+      return;
+    }
+    setSeedLoading(true);
+    setSeedError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/recommendations/seed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tmdb_ids: selected.map((item) => item.tmdb_id),
+          n: 10,
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error("Seed API failed.");
+      }
+      const data = (await resp.json()) as { results: SeedRec[] };
+      setSeedResults(data.results || []);
+    } catch (err) {
+      setSeedError("Seed recommendations unavailable. Start the server.");
+    } finally {
+      setSeedLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1a1a25_0%,_#0b0b0f_45%,_#050507_100%)] text-[color:var(--foreground)]">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 pt-8">
+      <header className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center px-6 pt-8 md:grid-cols-3">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-full bg-[conic-gradient(from_120deg,_#d7b36c,_#7dd3fc,_#d7b36c)]" />
           <div>
@@ -140,13 +178,11 @@ export default function Home() {
             </p>
           </div>
         </div>
-        <nav className="hidden items-center gap-6 text-sm text-[color:var(--muted)] md:flex">
+        <nav className="hidden items-center justify-center gap-6 text-sm text-[color:var(--muted)] md:flex">
           <span className="cursor-pointer">Discover</span>
           <span className="cursor-pointer">My Space</span>
         </nav>
-        <button className="cursor-pointer rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.2em] text-[color:var(--foreground)]">
-          Join Beta
-        </button>
+        <div className="hidden md:block" />
       </header>
 
       <main className="mx-auto grid w-full max-w-6xl gap-10 px-6 pb-24 pt-12 lg:grid-cols-[320px_1fr]">
@@ -248,6 +284,15 @@ export default function Home() {
                     </button>
                   </div>
                 ))}
+                <button
+                  onClick={generateFromSeeds}
+                  className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-3 py-2 text-xs font-semibold text-black"
+                >
+                  {seedLoading ? "Generating..." : "Generate"}
+                </button>
+                {seedError ? (
+                  <p className="text-xs text-[#ffb4a2]">{seedError}</p>
+                ) : null}
               </div>
             )}
           </div>
@@ -337,6 +382,48 @@ export default function Home() {
                   </div>
                 ))}
           </div>
+          </section>
+
+          <section className="grid gap-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                  Seed Picks
+                </p>
+                <h3 className="text-xl font-semibold">Taste-Based Results</h3>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-5">
+              {seedResults.length === 0
+                ? Array.from({ length: 5 }).map((_, idx) => (
+                    <div
+                      key={`seed-${idx}`}
+                      className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                    >
+                      <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold">Seed Rec {idx + 1}</p>
+                        <p className="text-xs text-[color:var(--muted)]">Content match --</p>
+                      </div>
+                    </div>
+                  ))
+                : seedResults.map((item) => (
+                    <div
+                      key={item.movie_id}
+                      className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                    >
+                      <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold">
+                          {item.title || `Movie ${item.movie_id}`}
+                        </p>
+                        <p className="text-xs text-[color:var(--muted)]">
+                          Content {item.content_score.toFixed(3)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+            </div>
           </section>
         </div>
       </main>
