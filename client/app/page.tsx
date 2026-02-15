@@ -26,6 +26,11 @@ type SeedRec = {
   poster_url?: string | null;
 };
 
+type AuthUser = {
+  id: number;
+  email: string;
+};
+
 const heroPicks = [
   "The Matrix (1999)",
   "Inception (2010)",
@@ -65,6 +70,12 @@ export default function Home() {
   const [seedResults, setSeedResults] = useState<SeedRec[]>([]);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedMode, setSeedMode] = useState<"hybrid" | "content">("hybrid");
+
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const selectedIds = useMemo(
     () => new Set(selected.map((item) => item.tmdb_id)),
@@ -107,6 +118,22 @@ export default function Home() {
 
     return () => clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    const loadMe = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/auth/me`, {
+          credentials: "include",
+        });
+        if (!resp.ok) return;
+        const data = (await resp.json()) as { user: AuthUser };
+        setAuthUser(data.user);
+      } catch (err) {
+        setAuthUser(null);
+      }
+    };
+    loadMe();
+  }, []);
 
   const addPick = (item: SearchResult) => {
     if (selectedIds.has(item.tmdb_id)) return;
@@ -173,6 +200,74 @@ export default function Home() {
     }
   };
 
+  const handleRegister = async () => {
+    if (!authEmail || !authPassword) {
+      setAuthError("Enter email and password.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: authEmail, password: authPassword }),
+      });
+      if (!resp.ok) {
+        throw new Error("Register failed");
+      }
+      const data = (await resp.json()) as { user: AuthUser };
+      setAuthUser(data.user);
+    } catch (err) {
+      setAuthError("Registration failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!authEmail || !authPassword) {
+      setAuthError("Enter email and password.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: authEmail, password: authPassword }),
+      });
+      if (!resp.ok) {
+        throw new Error("Login failed");
+      }
+      const data = (await resp.json()) as { user: AuthUser };
+      setAuthUser(data.user);
+    } catch (err) {
+      setAuthError("Login failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+      setAuthUser(null);
+    } catch (err) {
+      setAuthError("Logout failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1a1a25_0%,_#0b0b0f_45%,_#050507_100%)] text-[color:var(--foreground)]">
       <header className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center px-6 pt-8 md:grid-cols-3">
@@ -196,6 +291,66 @@ export default function Home() {
 
       <main className="mx-auto grid w-full max-w-6xl gap-10 px-6 pb-24 pt-12 lg:grid-cols-[320px_1fr]">
         <aside className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-black/40 p-5">
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                Account
+              </p>
+              <h2 className="text-lg font-semibold">
+                {authUser ? "Signed in" : "Sign in"}
+              </h2>
+            </div>
+            {authUser ? (
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-xs text-[color:var(--muted)]">
+                  {authUser.email}
+                </div>
+                <button
+                  onClick={handleLogout}
+                  disabled={authLoading}
+                  className="w-full cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                >
+                  {authLoading ? "Signing out..." : "Sign out"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  placeholder="Email"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                />
+                <input
+                  placeholder="Password"
+                  type="password"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleLogin}
+                    disabled={authLoading}
+                    className="cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                  >
+                    {authLoading ? "Working..." : "Login"}
+                  </button>
+                  <button
+                    onClick={handleRegister}
+                    disabled={authLoading}
+                    className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
+                  >
+                    Register
+                  </button>
+                </div>
+              </div>
+            )}
+            {authError ? (
+              <p className="text-xs text-[#ffb4a2]">{authError}</p>
+            ) : null}
+          </div>
+
           <div className="space-y-4">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Cookie, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr, Field
+import jwt
 
 from ml.inference.content import ContentRecommender
 from ml.inference.hybrid import HybridConfig, HybridRecommender
 from ml.inference.recommender import CFRecommender
-from ml.db import get_engine, movielens_tmdb_map
+from ml.db import get_engine, init_db, movielens_tmdb_map, users
 from ml.tmdb_client import TMDBClient
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sklearn.preprocessing import normalize
 
 app = FastAPI(title="CineMind API", version="0.1.0")
@@ -30,6 +33,17 @@ _HYBRID: HybridRecommender | None = None
 _TMDB: TMDBClient | None = None
 _ENGINE = None
 _POSTER_CACHE: dict[int, str | None] = {}
+
+_AUTH_COOKIE_NAME = "access_token"
+_AUTH_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+_AUTH_ALG = "HS256"
+_AUTH_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "4320"))
+_AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class Recommendation(BaseModel):
@@ -92,6 +106,26 @@ class HybridRecommendationResponse(BaseModel):
     results: list[HybridRecommendation]
 
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    created_at: datetime
+
+
+class AuthResponse(BaseModel):
+    user: UserOut
+
+
 def _init_model() -> CFRecommender:
     model = CFRecommender.load()
     if os.getenv("INCLUDE_TITLES", "true").lower() in {"1", "true", "yes"}:
@@ -128,6 +162,53 @@ def _poster_url_for_tmdb(tmdb_id: int) -> str | None:
     return url
 
 
+def _create_access_token(user_id: int, email: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "exp": now + timedelta(minutes=_AUTH_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, _AUTH_SECRET, algorithm=_AUTH_ALG)
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=_AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=_AUTH_COOKIE_SECURE,
+        samesite="lax",
+        max_age=_AUTH_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+
+
+def _user_from_row(row) -> UserOut:
+    data = row._mapping
+    return UserOut(
+        id=int(data["id"]),
+        email=str(data["email"]),
+        created_at=data["created_at"],
+    )
+
+
+def _get_user_by_email(email: str) -> UserOut | None:
+    if _ENGINE is None:
+        return None
+    with _ENGINE.begin() as conn:
+        row = conn.execute(select(users).where(users.c.email == email)).first()
+    return _user_from_row(row) if row else None
+
+
+def _get_user_by_id(user_id: int) -> UserOut | None:
+    if _ENGINE is None:
+        return None
+    with _ENGINE.begin() as conn:
+        row = conn.execute(select(users).where(users.c.id == user_id)).first()
+    return _user_from_row(row) if row else None
+
+
 def _map_movielens_to_tmdb(movie_ids: list[str]) -> dict[str, int]:
     if _ENGINE is None:
         return {}
@@ -161,6 +242,8 @@ def load_model() -> None:
     try:
         global _ENGINE
         _ENGINE = get_engine()
+        if os.getenv("MLR_DB_INIT", "true").lower() in {"1", "true", "yes"}:
+            init_db(_ENGINE)
     except RuntimeError:
         _ENGINE = None
 
@@ -168,6 +251,76 @@ def load_model() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/auth/register", response_model=AuthResponse)
+def register(payload: RegisterRequest, response: Response) -> AuthResponse:
+    if _ENGINE is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    email = payload.email.strip().lower()
+    with _ENGINE.begin() as conn:
+        existing = conn.execute(select(users).where(users.c.email == email)).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
+        password_hash = _PWD_CONTEXT.hash(payload.password)
+        row = conn.execute(
+            insert(users)
+            .values(email=email, password_hash=password_hash)
+            .returning(users.c.id, users.c.email, users.c.created_at)
+        ).first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+    user = _user_from_row(row)
+    token = _create_access_token(user.id, user.email)
+    _set_auth_cookie(response, token)
+    return AuthResponse(user=user)
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+def login(payload: LoginRequest, response: Response) -> AuthResponse:
+    if _ENGINE is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    email = payload.email.strip().lower()
+    with _ENGINE.begin() as conn:
+        row = conn.execute(select(users).where(users.c.email == email)).first()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    data = row._mapping
+    if not _PWD_CONTEXT.verify(payload.password, data["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    user = _user_from_row(row)
+    token = _create_access_token(user.id, user.email)
+    _set_auth_cookie(response, token)
+    return AuthResponse(user=user)
+
+
+@app.post("/auth/logout")
+def logout(response: Response) -> dict[str, str]:
+    response.delete_cookie(_AUTH_COOKIE_NAME, path="/")
+    return {"status": "ok"}
+
+
+@app.get("/auth/me", response_model=AuthResponse)
+def me(access_token: str | None = Cookie(default=None, alias=_AUTH_COOKIE_NAME)) -> AuthResponse:
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(access_token, _AUTH_SECRET, algorithms=[_AUTH_ALG])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = _get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return AuthResponse(user=user)
 
 
 @app.get("/tmdb/search", response_model=list[SearchResult])

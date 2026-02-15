@@ -3,7 +3,16 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Text, create_engine
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 
 metadata = MetaData()
@@ -28,6 +37,16 @@ tmdb_movies = Table(
     Column("keywords", JSONB, nullable=False, default=list),
     Column("overview", Text),
     Column("content_text", Text),
+    Column("updated_at", DateTime, nullable=False, default=datetime.utcnow),
+)
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("email", String(255), nullable=False, unique=True, index=True),
+    Column("password_hash", Text, nullable=False),
+    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
     Column("updated_at", DateTime, nullable=False, default=datetime.utcnow),
 )
 

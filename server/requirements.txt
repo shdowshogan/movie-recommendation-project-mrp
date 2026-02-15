@@ -3,3 +3,5 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 sqlalchemy>=2.0
 psycopg[binary]>=3.2
+passlib[bcrypt]>=1.7
+PyJWT>=2.9
