@@ -47,15 +47,9 @@ class CFRecommender:
         if n <= 0:
             return []
 
-        if user_id not in self.user_index:
-            return self._cold_start(n)
-
-        user_idx = self.user_index[user_id]
-        scores = self.user_factors[user_idx] @ self.item_factors + self.user_means[user_idx]
-
-        if exclude_rated:
-            for item_idx in self.rated_items.get(user_idx, []):
-                scores[item_idx] = -np.inf
+        scores = self.score_items(user_id, exclude_rated=exclude_rated)
+        if scores.size == 0:
+            return []
 
         top_idx = self._top_indices(scores, n)
         titles = self._movie_titles if include_titles else None
@@ -71,6 +65,21 @@ class CFRecommender:
             }
             for item_idx in top_idx
         ]
+
+    def score_items(self, user_id: str, exclude_rated: bool = True) -> np.ndarray:
+        if user_id not in self.user_index:
+            return self.item_means.copy()
+
+        user_idx = self.user_index[user_id]
+        scores = self.user_factors[user_idx] @ self.item_factors + self.user_means[user_idx]
+        if exclude_rated:
+            for item_idx in self.rated_items.get(user_idx, []):
+                scores[item_idx] = -np.inf
+        return scores
+
+    @staticmethod
+    def top_indices(scores: np.ndarray, n: int) -> list[int]:
+        return CFRecommender._top_indices(scores, n)
 
     def _cold_start(self, n: int) -> list[dict[str, float]]:
         scores = np.array(self.item_means, dtype=np.float32)

@@ -35,6 +35,32 @@ Environment variables:
 - `MLR_MODEL_FILE` (default: `ml/artifacts/cf_model.pkl`)
 - `MLR_SVD_RANK` (default: `50`)
 - `MLR_MIN_RATINGS_PER_USER` (default: `3`)
+- `MLR_DB_URL` (required for TMDB ingestion)
+- `TMDB_API_KEY` (required for TMDB ingestion)
+
+## TMDB ingestion
+
+From repo root:
+
+```
+python -m ml.ingest_tmdb --limit 100
+```
+
+This will:
+
+- Map MovieLens `movieId` to `tmdb_id`
+- Cache TMDB data in Postgres
+- Build `content_text` for content-based filtering
+
+## Content features
+
+Build the TF-IDF matrix from cached TMDB content:
+
+```
+python -m ml.content.build_content
+```
+
+Artifacts are saved under `ml/artifacts/`.
 
 ## Inference usage
 
