@@ -13,6 +13,7 @@ from ml.inference.recommender import CFRecommender
 from ml.db import get_engine, movielens_tmdb_map
 from ml.tmdb_client import TMDBClient
 from sqlalchemy import select
+from sklearn.preprocessing import normalize
 
 app = FastAPI(title="CineMind API", version="0.1.0")
 
@@ -28,6 +29,7 @@ _MODEL: CFRecommender | None = None
 _HYBRID: HybridRecommender | None = None
 _TMDB: TMDBClient | None = None
 _ENGINE = None
+_POSTER_CACHE: dict[int, str | None] = {}
 
 
 class Recommendation(BaseModel):
@@ -41,6 +43,7 @@ class HybridRecommendation(BaseModel):
     cf_score: float
     hybrid_score: float | None = None
     title: str | None = None
+    poster_url: str | None = None
 
 
 class RecommendationResponse(BaseModel):
@@ -64,6 +67,7 @@ class SeedRecommendation(BaseModel):
     movie_id: str
     content_score: float
     title: str | None = None
+    poster_url: str | None = None
 
 
 class SeedRecommendationResponse(BaseModel):
@@ -73,10 +77,6 @@ class SeedRecommendationResponse(BaseModel):
 class HybridRecommendationResponse(BaseModel):
     user_id: str
     results: list[HybridRecommendation]
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 def _init_model() -> CFRecommender:
@@ -94,6 +94,46 @@ def _init_hybrid(model: CFRecommender) -> HybridRecommender:
         candidate_k=int(os.getenv("HYBRID_CANDIDATE_K", "200")),
     )
     return HybridRecommender(model, content, config)
+
+
+def _poster_url_for_tmdb(tmdb_id: int) -> str | None:
+    if tmdb_id in _POSTER_CACHE:
+        return _POSTER_CACHE[tmdb_id]
+    if _TMDB is None:
+        return None
+    try:
+        details = _TMDB.movie_details(tmdb_id)
+    except Exception:
+        _POSTER_CACHE[tmdb_id] = None
+        return None
+    poster_path = details.get("poster_path")
+    if not poster_path:
+        _POSTER_CACHE[tmdb_id] = None
+        return None
+    url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+    _POSTER_CACHE[tmdb_id] = url
+    return url
+
+
+def _map_movielens_to_tmdb(movie_ids: list[str]) -> dict[str, int]:
+    if _ENGINE is None:
+        return {}
+    int_ids = []
+    for movie_id in movie_ids:
+        try:
+            int_ids.append(int(movie_id))
+        except ValueError:
+            continue
+    if not int_ids:
+        return {}
+    with _ENGINE.begin() as conn:
+        rows = conn.execute(
+            select(
+                movielens_tmdb_map.c.movielens_movie_id,
+                movielens_tmdb_map.c.tmdb_id,
+            ).where(movielens_tmdb_map.c.movielens_movie_id.in_(int_ids))
+        )
+        return {str(row.movielens_movie_id): int(row.tmdb_id) for row in rows}
 
 
 @app.on_event("startup")
@@ -154,6 +194,7 @@ def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse
     if not payload.tmdb_ids:
         raise HTTPException(status_code=400, detail="tmdb_ids is required")
 
+    mapped_tmdb_ids = set()
     with _ENGINE.begin() as conn:
         rows = conn.execute(
             select(
@@ -161,14 +202,40 @@ def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse
                 movielens_tmdb_map.c.tmdb_id,
             ).where(movielens_tmdb_map.c.tmdb_id.in_(payload.tmdb_ids))
         )
-        movielens_ids = [int(row.movielens_movie_id) for row in rows]
+        movielens_ids = []
+        for row in rows:
+            movielens_ids.append(int(row.movielens_movie_id))
+            mapped_tmdb_ids.add(int(row.tmdb_id))
 
-    if not movielens_ids:
-        raise HTTPException(status_code=404, detail="No mapped movies found")
+    missing_tmdb_ids = [mid for mid in payload.tmdb_ids if mid not in mapped_tmdb_ids]
+    text_profile = None
+    if missing_tmdb_ids:
+        if _TMDB is None:
+            raise HTTPException(status_code=503, detail="TMDB API key not configured")
+        texts = []
+        for tmdb_id in missing_tmdb_ids:
+            bundle = _TMDB.fetch_movie_bundle(tmdb_id)
+            text_parts = [
+                str(bundle.get("title") or ""),
+                " ".join(bundle.get("genres") or []),
+                " ".join(bundle.get("cast") or []),
+                str(bundle.get("director") or ""),
+                " ".join(bundle.get("keywords") or []),
+                str(bundle.get("overview") or ""),
+            ]
+            texts.append(" ".join(part for part in text_parts if part).strip().lower())
+        text_profile = _HYBRID.content.profile_from_texts(texts)
 
-    profile = _HYBRID.content.profile_from_movie_ids(movielens_ids)
-    if profile is None:
+    mapped_profile = _HYBRID.content.profile_from_movie_ids(movielens_ids)
+    if mapped_profile is None and text_profile is None:
         raise HTTPException(status_code=404, detail="No content profile available")
+
+    if mapped_profile is None:
+        profile = text_profile
+    elif text_profile is None:
+        profile = mapped_profile
+    else:
+        profile = normalize(mapped_profile + text_profile)
 
     results = _HYBRID.content.recommend_from_profile(
         profile,
@@ -179,6 +246,13 @@ def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse
     if _MODEL._movie_titles is not None:
         for entry in results:
             entry["title"] = _MODEL._movie_titles.get(entry["movie_id"], "")
+
+    tmdb_map = _map_movielens_to_tmdb([entry["movie_id"] for entry in results])
+    if tmdb_map:
+        for entry in results:
+            tmdb_id = tmdb_map.get(entry["movie_id"])
+            if tmdb_id:
+                entry["poster_url"] = _poster_url_for_tmdb(tmdb_id)
 
     return SeedRecommendationResponse(results=results)
 
@@ -218,5 +292,12 @@ def get_hybrid_recommendations(
     if include_titles and _MODEL._movie_titles is not None:
         for entry in results:
             entry["title"] = _MODEL._movie_titles.get(entry["movie_id"], "")
+
+    tmdb_map = _map_movielens_to_tmdb([entry["movie_id"] for entry in results])
+    if tmdb_map:
+        for entry in results:
+            tmdb_id = tmdb_map.get(entry["movie_id"])
+            if tmdb_id:
+                entry["poster_url"] = _poster_url_for_tmdb(tmdb_id)
 
     return HybridRecommendationResponse(user_id=user_id, results=results)

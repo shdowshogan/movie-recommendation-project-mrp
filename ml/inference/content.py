@@ -13,11 +13,17 @@ from ml.config import ARTIFACTS_DIR
 
 
 class ContentRecommender:
-    def __init__(self, matrix: csr_matrix, movie_ids: list[int]) -> None:
+    def __init__(
+        self,
+        matrix: csr_matrix,
+        movie_ids: list[int],
+        vectorizer,
+    ) -> None:
         self.matrix = matrix
         self.movie_ids = movie_ids
         self.movie_index = {movie_id: idx for idx, movie_id in enumerate(movie_ids)}
         self.matrix_norm = normalize(self.matrix, axis=1)
+        self.vectorizer = vectorizer
 
     @classmethod
     def load(
@@ -25,17 +31,26 @@ class ContentRecommender:
         artifacts_dir: Path = ARTIFACTS_DIR,
     ) -> "ContentRecommender":
         matrix = load_npz(artifacts_dir / "content_matrix.npz")
+        vectorizer = joblib.load(artifacts_dir / "content_vectorizer.pkl")
         index_path = artifacts_dir / "content_index.json"
         with index_path.open("r", encoding="utf-8") as handle:
             index = json.load(handle)
         movie_ids = [int(mid) for mid in index.get("movie_ids", [])]
-        return cls(matrix=matrix.tocsr(), movie_ids=movie_ids)
+        return cls(matrix=matrix.tocsr(), movie_ids=movie_ids, vectorizer=vectorizer)
 
     def profile_from_movie_ids(self, movie_ids: Iterable[int]) -> csr_matrix | None:
         indices = [self.movie_index[mid] for mid in movie_ids if mid in self.movie_index]
         if not indices:
             return None
         profile = np.asarray(self.matrix[indices].mean(axis=0))
+        return normalize(profile)
+
+    def profile_from_texts(self, texts: Iterable[str]) -> csr_matrix | None:
+        text_list = [text for text in texts if text.strip()]
+        if not text_list:
+            return None
+        vectors = self.vectorizer.transform(text_list)
+        profile = np.asarray(vectors.mean(axis=0))
         return normalize(profile)
 
     def similarity_to_profile(
