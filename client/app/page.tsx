@@ -25,13 +25,6 @@ const heroPicks = [
   "Se7en (1995)",
 ];
 
-const spotlight = [
-  { title: "Neon Noir", subtitle: "Brooding futures and sharp silhouettes" },
-  { title: "Quiet Storm", subtitle: "Character-driven thrillers" },
-  { title: "Midnight Myth", subtitle: "Dark fantasy and folklore" },
-  { title: "Cosmic Drift", subtitle: "Headphones on, space out" },
-];
-
 const picks = [
   "Arrival",
   "The Social Network",
@@ -95,7 +88,7 @@ export default function Home() {
 
     const timer = setTimeout(() => {
       handleSearch();
-    }, 400);
+    }, 50);
 
     return () => clearTimeout(timer);
   }, [query]);
@@ -148,11 +141,10 @@ export default function Home() {
           </div>
         </div>
         <nav className="hidden items-center gap-6 text-sm text-[color:var(--muted)] md:flex">
-          <span className="cursor-default">Discover</span>
-          <span className="cursor-default">Moments</span>
-          <span className="cursor-default">Taste DNA</span>
+          <span className="cursor-pointer">Discover</span>
+          <span className="cursor-pointer">My Space</span>
         </nav>
-        <button className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.2em] text-[color:var(--foreground)]">
+        <button className="cursor-pointer rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.2em] text-[color:var(--foreground)]">
           Join Beta
         </button>
       </header>
@@ -174,7 +166,7 @@ export default function Home() {
             />
             <button
               onClick={handleSearch}
-              className="w-full rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
+              className="w-full cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
             >
               {searchLoading ? "Searching..." : "Search"}
             </button>
@@ -219,7 +211,7 @@ export default function Home() {
                     <button
                       onClick={() => addPick(item)}
                       disabled={selectedIds.has(item.tmdb_id) || selected.length >= 10}
-                      className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--foreground)] disabled:opacity-40"
+                      className="cursor-pointer rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--foreground)] disabled:opacity-40"
                     >
                       {selectedIds.has(item.tmdb_id) ? "Added" : "Add"}
                     </button>
@@ -250,7 +242,7 @@ export default function Home() {
                     </p>
                     <button
                       onClick={() => removePick(item.tmdb_id)}
-                      className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
+                      className="cursor-pointer rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
                     >
                       Remove
                     </button>
@@ -262,7 +254,7 @@ export default function Home() {
         </aside>
 
         <div className="flex flex-col gap-14">
-          <section className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr]">
+          <section className="grid gap-10">
             <div className="flex flex-col gap-6">
             <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--accent)]">
               Pick 5-10 films
@@ -286,24 +278,6 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 via-white/5 to-transparent p-6">
-            <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
-              Taste Signal
-            </p>
-            <div className="space-y-4">
-              {spotlight.map((item) => (
-                <div key={item.title} className="rounded-2xl border border-white/10 bg-black/40 p-4">
-                  <p className="text-sm font-semibold text-[color:var(--foreground)]">
-                    {item.title}
-                  </p>
-                  <p className="text-xs text-[color:var(--muted)]">{item.subtitle}</p>
-                  <div className="mt-3 h-1.5 w-full rounded-full bg-white/10">
-                    <div className="h-1.5 w-2/3 rounded-full bg-[color:var(--accent-2)]" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
           </section>
 
           <section className="grid gap-6">
@@ -323,7 +297,7 @@ export default function Home() {
               />
               <button
                 onClick={loadHybrid}
-                className="rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
+                className="cursor-pointer rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
               >
                 {hybridLoading ? "Loading" : "Load"}
               </button>
