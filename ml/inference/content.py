@@ -35,7 +35,7 @@ class ContentRecommender:
         indices = [self.movie_index[mid] for mid in movie_ids if mid in self.movie_index]
         if not indices:
             return None
-        profile = self.matrix[indices].mean(axis=0)
+        profile = np.asarray(self.matrix[indices].mean(axis=0))
         return normalize(profile)
 
     def similarity_to_profile(

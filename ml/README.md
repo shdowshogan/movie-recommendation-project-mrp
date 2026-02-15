@@ -70,3 +70,9 @@ from ml.inference.recommender import CFRecommender
 model = CFRecommender.load()
 recommendations = model.recommend(user_id="123", n=10)
 ```
+
+## User ratings (local)
+
+```
+python -m ml.tools.user_ratings 45 --limit 20
+```
