@@ -78,6 +78,7 @@ export default function Home() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showPasswordTips, setShowPasswordTips] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const passwordTooShort = authPassword.length > 0 && authPassword.length < 8;
 
@@ -296,11 +297,11 @@ export default function Home() {
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-full bg-[conic-gradient(from_120deg,_#d7b36c,_#7dd3fc,_#d7b36c)]" />
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-[color:var(--muted)]">
+            {/* <p className="text-xs uppercase tracking-[0.35em] text-[color:var(--muted)]">
               CineMind
-            </p>
+            </p> */}
             <p className="text-lg font-semibold text-[color:var(--foreground)]">
-              Signal Curator
+              CineMind
             </p>
           </div>
         </div>
@@ -308,78 +309,83 @@ export default function Home() {
           <span className="cursor-pointer">Discover</span>
           <span className="cursor-pointer">My Space</span>
         </nav>
-        <div className="hidden md:block" />
+        <div className="relative hidden items-center justify-end md:flex">
+          <button
+            onClick={() => setProfileOpen((prev) => !prev)}
+            className="cursor-pointer rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+          >
+            {authUser ? "Profile" : "Sign in"}
+          </button>
+          {profileOpen ? (
+            <div className="absolute right-0 top-full z-20 mt-3 w-64 rounded-2xl border border-white/10 bg-[#0b0b12] p-4 shadow-[0_12px_40px_rgba(0,0,0,0.4)]">
+              <div className="space-y-3">
+                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                  Account
+                </p>
+                {authUser ? (
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-xs text-[color:var(--muted)]">
+                      {authUser.email}
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      disabled={authLoading}
+                      className="w-full cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                    >
+                      {authLoading ? "Signing out..." : "Sign out"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <input
+                      placeholder="Email"
+                      value={authEmail}
+                      onChange={(event) => setAuthEmail(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                    />
+                    <input
+                      placeholder="Password"
+                      type={showPassword ? "text" : "password"}
+                      value={authPassword}
+                      onChange={(event) => setAuthPassword(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="-mt-1 w-fit cursor-pointer text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
+                    >
+                      {showPassword ? "Hide password" : "See password"}
+                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handleLogin}
+                        disabled={authLoading}
+                        className="cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                      >
+                        {authLoading ? "Working..." : "Login"}
+                      </button>
+                      <button
+                        onClick={handleRegister}
+                        disabled={authLoading}
+                        className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
+                      >
+                        Register
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {authError ? (
+                  <p className="text-xs text-[#ffb4a2]">{authError}</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </header>
 
       <main className="mx-auto grid w-full max-w-6xl gap-10 px-6 pb-24 pt-12 lg:grid-cols-[320px_1fr]">
         <aside className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-black/40 p-5">
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
-                Account
-              </p>
-              <h2 className="text-lg font-semibold">
-                {authUser ? "Signed in" : "Sign in"}
-              </h2>
-            </div>
-            {authUser ? (
-              <div className="space-y-3">
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-xs text-[color:var(--muted)]">
-                  {authUser.email}
-                </div>
-                <button
-                  onClick={handleLogout}
-                  disabled={authLoading}
-                  className="w-full cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
-                >
-                  {authLoading ? "Signing out..." : "Sign out"}
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <input
-                  placeholder="Email"
-                  value={authEmail}
-                  onChange={(event) => setAuthEmail(event.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
-                />
-                <input
-                  placeholder="Password"
-                  type={showPassword ? "text" : "password"}
-                  value={authPassword}
-                  onChange={(event) => setAuthPassword(event.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  className="-mt-1 w-fit cursor-pointer text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
-                >
-                  {showPassword ? "Hide password" : "See password"}
-                </button>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={handleLogin}
-                    disabled={authLoading}
-                    className="cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
-                  >
-                    {authLoading ? "Working..." : "Login"}
-                  </button>
-                  <button
-                    onClick={handleRegister}
-                    disabled={authLoading}
-                    className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
-                  >
-                    Register
-                  </button>
-                </div>
-              </div>
-            )}
-            {authError ? (
-              <p className="text-xs text-[#ffb4a2]">{authError}</p>
-            ) : null}
-          </div>
-
           <div className="space-y-4">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
