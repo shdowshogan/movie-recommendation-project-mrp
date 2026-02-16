@@ -72,6 +72,14 @@ class SearchResult(BaseModel):
     poster_url: str | None = None
 
 
+class BrowseResult(BaseModel):
+    tmdb_id: int
+    title: str
+    year: str | None = None
+    poster_url: str | None = None
+    overview: str | None = None
+
+
 class SeedRequest(BaseModel):
     tmdb_ids: list[int]
     n: int = 10
@@ -289,11 +297,11 @@ def login(payload: LoginRequest, response: Response) -> AuthResponse:
         row = conn.execute(select(users).where(users.c.email == email)).first()
 
     if not row:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Email not found")
 
     data = row._mapping
     if not _PWD_CONTEXT.verify(payload.password, data["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Incorrect password")
 
     user = _user_from_row(row)
     token = _create_access_token(user.id, user.email)
@@ -346,6 +354,63 @@ def search_tmdb(
                 title=item.get("title") or "",
                 year=year,
                 poster_url=poster_url,
+            )
+        )
+    return payload
+
+
+@app.get("/tmdb/trending", response_model=list[BrowseResult])
+def get_trending_movies(
+    limit: int = Query(12, ge=1, le=40),
+    window: str = Query("week", pattern="^(day|week)$"),
+) -> list[BrowseResult]:
+    if _TMDB is None:
+        raise HTTPException(status_code=503, detail="TMDB API key not configured")
+
+    results = _TMDB.trending_movies(window=window)
+    payload: list[BrowseResult] = []
+    for item in results[:limit]:
+        release_date = item.get("release_date") or ""
+        year = release_date.split("-")[0] if release_date else None
+        poster_path = item.get("poster_path")
+        poster_url = (
+            f"https://image.tmdb.org/t/p/w342{poster_path}" if poster_path else None
+        )
+        payload.append(
+            BrowseResult(
+                tmdb_id=int(item.get("id")),
+                title=item.get("title") or "",
+                year=year,
+                poster_url=poster_url,
+                overview=item.get("overview"),
+            )
+        )
+    return payload
+
+
+@app.get("/tmdb/upcoming", response_model=list[BrowseResult])
+def get_upcoming_movies(
+    limit: int = Query(12, ge=1, le=40),
+) -> list[BrowseResult]:
+    if _TMDB is None:
+        raise HTTPException(status_code=503, detail="TMDB API key not configured")
+
+    results = _TMDB.upcoming_movies()
+    payload: list[BrowseResult] = []
+    for item in results[:limit]:
+        release_date = item.get("release_date") or ""
+        year = release_date.split("-")[0] if release_date else None
+        poster_path = item.get("poster_path")
+        poster_url = (
+            f"https://image.tmdb.org/t/p/w342{poster_path}" if poster_path else None
+        )
+        payload.append(
+            BrowseResult(
+                tmdb_id=int(item.get("id")),
+                title=item.get("title") or "",
+                year=year,
+                poster_url=poster_url,
+                overview=item.get("overview"),
             )
         )
     return payload

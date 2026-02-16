@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type SearchResult = {
   tmdb_id: number;
@@ -24,6 +24,14 @@ type SeedRec = {
   hybrid_score?: number | null;
   title?: string | null;
   poster_url?: string | null;
+};
+
+type DiscoverItem = {
+  tmdb_id: number;
+  title: string;
+  year?: string | null;
+  poster_url?: string | null;
+  overview?: string | null;
 };
 
 type AuthUser = {
@@ -60,6 +68,15 @@ export default function Home() {
   const [selected, setSelected] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"discover" | "my-space">("discover");
+  const [discoverMode, setDiscoverMode] = useState<"trending" | "upcoming">(
+    "trending"
+  );
+  const [discoverItems, setDiscoverItems] = useState<DiscoverItem[]>([]);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [likedIds, setLikedIds] = useState<Record<number, boolean>>({});
+  const [ratings, setRatings] = useState<Record<number, number>>({});
 
   const [userId, setUserId] = useState("45");
   const [hybridLoading, setHybridLoading] = useState(false);
@@ -79,6 +96,8 @@ export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
   const [showPasswordTips, setShowPasswordTips] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const profileRef = useRef<HTMLDivElement | null>(null);
 
   const passwordTooShort = authPassword.length > 0 && authPassword.length < 8;
 
@@ -146,6 +165,54 @@ export default function Home() {
     loadMe();
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== "discover") return;
+    const loadDiscover = async () => {
+      setDiscoverLoading(true);
+      setDiscoverError(null);
+      try {
+        const endpoint =
+          discoverMode === "trending"
+            ? `${API_BASE}/tmdb/trending?limit=12`
+            : `${API_BASE}/tmdb/upcoming?limit=12`;
+        const resp = await fetch(endpoint);
+        if (!resp.ok) {
+          throw new Error("Discover API failed.");
+        }
+        const data = (await resp.json()) as DiscoverItem[];
+        setDiscoverItems(data);
+      } catch (err) {
+        setDiscoverError("Discover feed unavailable. Start the server.");
+      } finally {
+        setDiscoverLoading(false);
+      }
+    };
+    loadDiscover();
+  }, [activeTab, discoverMode]);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const handleOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (profileRef.current && target && !profileRef.current.contains(target)) {
+        setProfileOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProfileOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [profileOpen]);
+
   const addPick = (item: SearchResult) => {
     if (selectedIds.has(item.tmdb_id)) return;
     if (selected.length >= 10) return;
@@ -154,6 +221,14 @@ export default function Home() {
 
   const removePick = (tmdbId: number) => {
     setSelected((prev) => prev.filter((item) => item.tmdb_id !== tmdbId));
+  };
+
+  const toggleLike = (tmdbId: number) => {
+    setLikedIds((prev) => ({ ...prev, [tmdbId]: !prev[tmdbId] }));
+  };
+
+  const setRating = (tmdbId: number, value: number) => {
+    setRatings((prev) => ({ ...prev, [tmdbId]: value }));
   };
 
   const loadHybrid = async () => {
@@ -212,11 +287,21 @@ export default function Home() {
   };
 
   const handleRegister = async () => {
-    if (!authEmail || !authPassword) {
-      setAuthError("Enter email and password.");
+    setAuthMode("register");
+    if (!authEmail && !authPassword) {
+      setAuthError("Email and password are required.");
       if (!authPassword) {
         setShowPasswordTips(true);
       }
+      return;
+    }
+    if (!authEmail) {
+      setAuthError("Email is required.");
+      return;
+    }
+    if (!authPassword) {
+      setAuthError("Password is required.");
+      setShowPasswordTips(true);
       return;
     }
     if (passwordTooShort) {
@@ -234,10 +319,14 @@ export default function Home() {
         body: JSON.stringify({ email: authEmail, password: authPassword }),
       });
       if (!resp.ok) {
-        if (resp.status === 422) {
+        const payload = (await resp.json().catch(() => null)) as
+          | { detail?: string }
+          | null;
+        if (resp.status === 422 || resp.status === 400) {
           setShowPasswordTips(true);
         }
-        throw new Error("Register failed");
+        setAuthError(payload?.detail || "Registration failed.");
+        return;
       }
       const data = (await resp.json()) as { user: AuthUser };
       setAuthUser(data.user);
@@ -250,8 +339,17 @@ export default function Home() {
   };
 
   const handleLogin = async () => {
-    if (!authEmail || !authPassword) {
-      setAuthError("Enter email and password.");
+    setAuthMode("login");
+    if (!authEmail && !authPassword) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    if (!authEmail) {
+      setAuthError("Email is required.");
+      return;
+    }
+    if (!authPassword) {
+      setAuthError("Password is required.");
       return;
     }
     setAuthLoading(true);
@@ -264,7 +362,11 @@ export default function Home() {
         body: JSON.stringify({ email: authEmail, password: authPassword }),
       });
       if (!resp.ok) {
-        throw new Error("Login failed");
+        const payload = (await resp.json().catch(() => null)) as
+          | { detail?: string }
+          | null;
+        setAuthError(payload?.detail || "Login failed.");
+        return;
       }
       const data = (await resp.json()) as { user: AuthUser };
       setAuthUser(data.user);
@@ -293,7 +395,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1a1a25_0%,_#0b0b0f_45%,_#050507_100%)] text-[color:var(--foreground)]">
-      <header className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center px-6 pt-8 md:grid-cols-3">
+      <header className="mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto] items-center px-6 pt-8 md:grid-cols-3">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-full bg-[conic-gradient(from_120deg,_#d7b36c,_#7dd3fc,_#d7b36c)]" />
           <div>
@@ -306,81 +408,184 @@ export default function Home() {
           </div>
         </div>
         <nav className="hidden items-center justify-center gap-6 text-sm text-[color:var(--muted)] md:flex">
-          <span className="cursor-pointer">Discover</span>
-          <span className="cursor-pointer">My Space</span>
-        </nav>
-        <div className="relative hidden items-center justify-end md:flex">
           <button
-            onClick={() => setProfileOpen((prev) => !prev)}
-            className="cursor-pointer rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+            onClick={() => setActiveTab("discover")}
+            className={`cursor-pointer transition focus:outline-none focus-visible:outline-none ${
+              activeTab === "discover"
+                ? "text-[color:var(--foreground)]"
+                : "text-[color:var(--muted)]"
+            }`}
+          >
+            Discover
+          </button>
+          <button
+            onClick={() => setActiveTab("my-space")}
+            className={`cursor-pointer transition focus:outline-none focus-visible:outline-none ${
+              activeTab === "my-space"
+                ? "text-[color:var(--foreground)]"
+                : "text-[color:var(--muted)]"
+            }`}
+          >
+            My Space
+          </button>
+        </nav>
+        <div ref={profileRef} className="relative flex items-center justify-end">
+          <button
+            onClick={() => {
+              const next = !profileOpen;
+              setProfileOpen(next);
+              if (next && !authUser) {
+                setAuthMode("login");
+                setAuthError(null);
+                setShowPasswordTips(false);
+              }
+            }}
+            className="cursor-pointer rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)] transition focus:outline-none focus-visible:outline-none"
           >
             {authUser ? "Profile" : "Sign in"}
           </button>
-          {profileOpen ? (
-            <div className="absolute right-0 top-full z-20 mt-3 w-64 rounded-2xl border border-white/10 bg-[#0b0b12] p-4 shadow-[0_12px_40px_rgba(0,0,0,0.4)]">
-              <div className="space-y-3">
-                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
-                  Account
+          <div
+            onClick={() => setProfileOpen(false)}
+            className={`fixed inset-0 z-10 bg-black/40 backdrop-blur-sm transition-opacity md:hidden ${
+              profileOpen ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+          />
+          <div
+            aria-hidden={!profileOpen}
+            className={`fixed left-4 right-4 top-20 z-20 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-3xl border border-white/10 bg-black/70 p-5 backdrop-blur-xl shadow-[0_18px_50px_rgba(0,0,0,0.45)] transition duration-150 md:absolute md:left-auto md:right-0 md:top-full md:mt-3 md:max-h-none md:w-72 md:overflow-visible ${
+              profileOpen
+                ? "translate-y-0 scale-100 opacity-100"
+                : "pointer-events-none translate-y-2 scale-95 opacity-0"
+            }`}
+          >
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs uppercase tracking-[0.35em] text-[color:var(--muted)]">
+                  {authUser ? "Account" : authMode === "login" ? "Login" : "Register"}
                 </p>
-                {authUser ? (
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-xs text-[color:var(--muted)]">
-                      {authUser.email}
-                    </div>
+                <div className="h-2 w-2 rounded-full bg-[color:var(--accent)]" />
+              </div>
+              {authUser ? (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-xs text-[color:var(--muted)]">
+                    {authUser.email}
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    disabled={authLoading}
+                    className="w-full cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)] transition focus:outline-none focus-visible:outline-none"
+                  >
+                    {authLoading ? "Signing out..." : "Sign out"}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
                     <button
-                      onClick={handleLogout}
-                      disabled={authLoading}
-                      className="w-full cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                      type="button"
+                      onClick={() => {
+                        setAuthMode("login");
+                        setAuthError(null);
+                        setShowPasswordTips(false);
+                      }}
+                      className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
+                        authMode === "login"
+                          ? "bg-[color:var(--accent)] text-black"
+                          : "text-[color:var(--muted)]"
+                      }`}
                     >
-                      {authLoading ? "Signing out..." : "Sign out"}
+                      Login
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode("register");
+                        setAuthError(null);
+                        setShowPasswordTips(false);
+                      }}
+                      className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
+                        authMode === "register"
+                          ? "bg-[color:var(--accent)] text-black"
+                          : "text-[color:var(--muted)]"
+                      }`}
+                    >
+                      Register
                     </button>
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    <input
-                      placeholder="Email"
-                      value={authEmail}
-                      onChange={(event) => setAuthEmail(event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
-                    />
+                  <input
+                    placeholder="Email"
+                    value={authEmail}
+                    onChange={(event) => setAuthEmail(event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                  />
+                  <div className="relative">
                     <input
                       placeholder="Password"
                       type={showPassword ? "text" : "password"}
                       value={authPassword}
                       onChange={(event) => setAuthPassword(event.target.value)}
-                      className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                      className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 pr-12 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
-                      className="-mt-1 w-fit cursor-pointer text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute right-3 top-1/2 z-10 -translate-y-1/2 cursor-pointer rounded-full bg-white/5 p-2 text-[color:var(--muted)] transition hover:text-[color:var(--foreground)] focus:outline-none focus-visible:outline-none"
                     >
-                      {showPassword ? "Hide password" : "See password"}
+                      {showPassword ? (
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      ) : (
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M3 12s3.5-7 9-7c3.1 0 5.6 1.3 7.4 3" />
+                          <path d="M21 12s-3.5 7-9 7c-3.1 0-5.6-1.3-7.4-3" />
+                          <path d="M14.1 9.9a3 3 0 0 0-4.2 4.2" />
+                          <path d="M3 3l18 18" />
+                        </svg>
+                      )}
                     </button>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={handleLogin}
-                        disabled={authLoading}
-                        className="cursor-pointer rounded-2xl border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
-                      >
-                        {authLoading ? "Working..." : "Login"}
-                      </button>
-                      <button
-                        onClick={handleRegister}
-                        disabled={authLoading}
-                        className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
-                      >
-                        Register
-                      </button>
-                    </div>
                   </div>
-                )}
-                {authError ? (
-                  <p className="text-xs text-[#ffb4a2]">{authError}</p>
-                ) : null}
-              </div>
+                  {authMode === "register" && showPasswordTips && passwordTooShort ? (
+                    <p className="text-xs text-[#ff8a8a]">
+                      Password tip: use at least 8 characters.
+                    </p>
+                  ) : null}
+                  <button
+                    onClick={authMode === "login" ? handleLogin : handleRegister}
+                    disabled={authLoading}
+                    className="w-full cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black transition focus:outline-none focus-visible:outline-none"
+                  >
+                    {authLoading
+                      ? "Working..."
+                      : authMode === "login"
+                        ? "Login"
+                        : "Register"}
+                  </button>
+                </div>
+              )}
+              {authError ? (
+                <p className="text-xs text-[#ffb4a2]">{authError}</p>
+              ) : null}
             </div>
-          ) : null}
+          </div>
         </div>
       </header>
 
@@ -399,11 +604,6 @@ export default function Home() {
               onChange={(event) => setQuery(event.target.value)}
               className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
             />
-            {showPasswordTips && passwordTooShort ? (
-              <p className="text-xs text-[#ff8a8a]">
-                Password tip: use at least 8 characters.
-              </p>
-            ) : null}
             <button
               onClick={handleSearch}
               className="w-full cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
@@ -503,7 +703,176 @@ export default function Home() {
         </aside>
 
         <div className="flex flex-col gap-14">
-          <section className="grid gap-10">
+          {activeTab === "discover" ? (
+            <section className="grid gap-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--accent)]">
+                    Discover
+                  </p>
+                  <h2 className="text-2xl font-semibold">
+                    {discoverMode === "trending"
+                      ? "Hyped right now"
+                      : "Upcoming releases"}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
+                  <button
+                    type="button"
+                    onClick={() => setDiscoverMode("trending")}
+                    className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
+                      discoverMode === "trending"
+                        ? "bg-[color:var(--accent)] text-black"
+                        : "text-[color:var(--muted)]"
+                    }`}
+                  >
+                    Trending
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscoverMode("upcoming")}
+                    className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
+                      discoverMode === "upcoming"
+                        ? "bg-[color:var(--accent)] text-black"
+                        : "text-[color:var(--muted)]"
+                    }`}
+                  >
+                    Upcoming
+                  </button>
+                </div>
+              </div>
+              {discoverError ? (
+                <p className="text-xs text-[#ffb4a2]">{discoverError}</p>
+              ) : null}
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {discoverLoading
+                  ? Array.from({ length: 6 }).map((_, idx) => (
+                      <div
+                        key={`discover-${idx}`}
+                        className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 p-4"
+                      >
+                        <div className="aspect-[2/3] rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                        <div className="space-y-2">
+                          <div className="h-3 w-2/3 rounded-full bg-white/10" />
+                          <div className="h-3 w-1/2 rounded-full bg-white/10" />
+                        </div>
+                      </div>
+                    ))
+                  : discoverItems.map((item) => (
+                      <div
+                        key={item.tmdb_id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => addPick(item)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            addPick(item);
+                          }
+                        }}
+                        className="group relative flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 text-left transition hover:border-white/20 hover:bg-white/10 focus:outline-none focus-visible:outline-none"
+                      >
+                        <div className="aspect-[2/3] overflow-hidden rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
+                          {item.poster_url ? (
+                            <img
+                              src={item.poster_url}
+                              alt={item.title}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-[color:var(--foreground)]">
+                              {item.title}
+                            </p>
+                            {selectedIds.has(item.tmdb_id) ? (
+                              <span className="rounded-full border border-white/10 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                                Added
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-xs text-[color:var(--muted)]">
+                            {item.year || "Unknown year"}
+                          </p>
+                          {item.overview ? (
+                            <p className="line-clamp-3 text-xs text-[color:var(--muted)]">
+                              {item.overview}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="mt-auto flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleLike(item.tmdb_id);
+                            }}
+                            className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] transition focus:outline-none focus-visible:outline-none ${
+                              likedIds[item.tmdb_id]
+                                ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                                : "border-white/10 text-[color:var(--muted)]"
+                            }`}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-3 w-3"
+                              fill={
+                                likedIds[item.tmdb_id]
+                                  ? "currentColor"
+                                  : "none"
+                              }
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M20.8 5.7c-1.5-1.6-4-1.6-5.5 0L12 9l-3.3-3.3c-1.5-1.6-4-1.6-5.5 0-1.8 1.8-1.6 4.6.2 6.3L12 21l8.6-9c1.8-1.7 2-4.5.2-6.3Z" />
+                            </svg>
+                            Like
+                          </button>
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: 5 }).map((_, idx) => {
+                              const value = idx + 1;
+                              const active = (ratings[item.tmdb_id] || 0) >= value;
+                              return (
+                                <button
+                                  key={`${item.tmdb_id}-rating-${value}`}
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setRating(item.tmdb_id, value);
+                                  }}
+                                  className={`transition focus:outline-none focus-visible:outline-none ${
+                                    active
+                                      ? "text-[color:var(--accent)]"
+                                      : "text-white/30"
+                                  }`}
+                                >
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    className="h-3.5 w-3.5"
+                                    fill={active ? "currentColor" : "none"}
+                                    stroke="currentColor"
+                                    strokeWidth="1.4"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  >
+                                    <path d="M12 3.5 14.6 8l5.1.8-3.7 3.7.9 5.1L12 15.8 7.1 17.6l.9-5.1-3.7-3.7 5.1-.8L12 3.5Z" />
+                                  </svg>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+              </div>
+            </section>
+          ) : (
+            <>
+              <section className="grid gap-10">
             <div className="flex flex-col gap-6">
             <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--accent)]">
               Pick 5-10 films
@@ -527,9 +896,9 @@ export default function Home() {
             </div>
           </div>
 
-          </section>
+              </section>
 
-          <section className="grid gap-6">
+              <section className="grid gap-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
@@ -600,9 +969,9 @@ export default function Home() {
                   </div>
                 ))}
           </div>
-          </section>
+              </section>
 
-          <section className="grid gap-6">
+              <section className="grid gap-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
@@ -682,7 +1051,9 @@ export default function Home() {
                     </div>
                   ))}
             </div>
-          </section>
+              </section>
+            </>
+          )}
         </div>
       </main>
     </div>

@@ -62,6 +62,14 @@ class TMDBClient:
     def movie_keywords(self, tmdb_id: int) -> dict[str, Any]:
         return self._get(f"/movie/{tmdb_id}/keywords")
 
+    def trending_movies(self, window: str = "week") -> list[dict[str, Any]]:
+        data = self._get(f"/trending/movie/{window}")
+        return data.get("results", [])
+
+    def upcoming_movies(self) -> list[dict[str, Any]]:
+        data = self._get("/movie/upcoming")
+        return data.get("results", [])
+
     def fetch_movie_bundle(self, tmdb_id: int, cast_limit: int = 10) -> dict[str, Any]:
         details = self.movie_details(tmdb_id)
         credits = self.movie_credits(tmdb_id)
