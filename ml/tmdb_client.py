@@ -53,6 +53,18 @@ class TMDBClient:
         data = self._get("/search/movie", **params)
         return data.get("results", [])
 
+    def search_person(self, query: str) -> list[dict[str, Any]]:
+        data = self._get("/search/person", query=query)
+        return data.get("results", [])
+
+    def genre_list(self) -> list[dict[str, Any]]:
+        data = self._get("/genre/movie/list")
+        return data.get("genres", [])
+
+    def discover_movies(self, **params: Any) -> list[dict[str, Any]]:
+        data = self._get("/discover/movie", **params)
+        return data.get("results", [])
+
     def movie_details(self, tmdb_id: int) -> dict[str, Any]:
         return self._get(f"/movie/{tmdb_id}")
 

@@ -14,7 +14,7 @@ from ml.inference.content import ContentRecommender
 from ml.inference.hybrid import HybridConfig, HybridRecommender
 from ml.inference.recommender import CFRecommender
 from ml.config import MOVIES_FILE, RATINGS_FILE
-from ml.db import get_engine, init_db, movielens_tmdb_map, users
+from ml.db import get_engine, init_db, movielens_tmdb_map, tmdb_movies, users
 from ml.training.io import get_user_ratings as get_user_ratings_rows
 from ml.tmdb_client import TMDBClient
 from sqlalchemy import insert, select
@@ -80,6 +80,11 @@ class BrowseResult(BaseModel):
     year: str | None = None
     poster_url: str | None = None
     overview: str | None = None
+
+
+class GenreResult(BaseModel):
+    id: int
+    name: str
 
 
 class SeedRequest(BaseModel):
@@ -245,6 +250,64 @@ def _map_movielens_to_tmdb(movie_ids: list[str]) -> dict[str, int]:
             ).where(movielens_tmdb_map.c.movielens_movie_id.in_(int_ids))
         )
         return {str(row.movielens_movie_id): int(row.tmdb_id) for row in rows}
+
+
+def _parse_csv_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _apply_year_filter(
+    results: list[dict[str, Any]],
+    year_from: int | None,
+    year_to: int | None,
+) -> list[dict[str, Any]]:
+    if not results:
+        return results
+    if year_from is None and year_to is None:
+        return results
+    if _ENGINE is None:
+        return results
+
+    ids = [entry.get("movie_id") for entry in results if entry.get("movie_id")]
+    tmdb_map = _map_movielens_to_tmdb([str(movie_id) for movie_id in ids])
+    tmdb_ids = [tmdb_id for tmdb_id in tmdb_map.values()]
+    if not tmdb_ids:
+        return results
+
+    with _ENGINE.begin() as conn:
+        rows = conn.execute(
+            select(
+                tmdb_movies.c.tmdb_id,
+                tmdb_movies.c.release_date,
+            ).where(tmdb_movies.c.tmdb_id.in_(tmdb_ids))
+        )
+        allowed = set()
+        for row in rows:
+            release_date = row.release_date or ""
+            year = None
+            if release_date and len(release_date) >= 4:
+                try:
+                    year = int(release_date[:4])
+                except ValueError:
+                    year = None
+            if year is None:
+                continue
+            if year_from is not None and year < year_from:
+                continue
+            if year_to is not None and year > year_to:
+                continue
+            allowed.add(int(row.tmdb_id))
+
+    if not allowed:
+        return []
+
+    return [
+        entry
+        for entry in results
+        if tmdb_map.get(str(entry.get("movie_id"))) in allowed
+    ]
 
 
 @app.on_event("startup")
@@ -425,6 +488,87 @@ def get_upcoming_movies(
     return payload
 
 
+@app.get("/tmdb/genres", response_model=list[GenreResult])
+def get_genres() -> list[GenreResult]:
+    if _TMDB is None:
+        raise HTTPException(status_code=503, detail="TMDB API key not configured")
+    genres = _TMDB.genre_list()
+    return [GenreResult(id=int(item.get("id")), name=item.get("name") or "") for item in genres]
+
+
+@app.get("/tmdb/discover", response_model=list[BrowseResult])
+def discover_movies(
+    limit: int = Query(12, ge=1, le=40),
+    year_from: int | None = Query(None, ge=1870, le=2100),
+    year_to: int | None = Query(None, ge=1870, le=2100),
+    runtime_min: int | None = Query(None, ge=0, le=600),
+    runtime_max: int | None = Query(None, ge=0, le=600),
+    genre_ids: str | None = Query(None),
+    cast: str | None = Query(None),
+    director: str | None = Query(None),
+) -> list[BrowseResult]:
+    if _TMDB is None:
+        raise HTTPException(status_code=503, detail="TMDB API key not configured")
+
+    params: dict[str, Any] = {"sort_by": "popularity.desc"}
+    if year_from is not None:
+        params["primary_release_date.gte"] = f"{year_from}-01-01"
+    if year_to is not None:
+        params["primary_release_date.lte"] = f"{year_to}-12-31"
+    if runtime_min is not None:
+        params["with_runtime.gte"] = runtime_min
+    if runtime_max is not None:
+        params["with_runtime.lte"] = runtime_max
+
+    genre_list = _parse_csv_list(genre_ids)
+    if genre_list:
+        params["with_genres"] = ",".join(genre_list)
+
+    cast_names = _parse_csv_list(cast)
+    if cast_names:
+        cast_ids = []
+        for name in cast_names:
+            results = _TMDB.search_person(name)
+            if results:
+                person_id = results[0].get("id")
+                if person_id:
+                    cast_ids.append(str(person_id))
+        if cast_ids:
+            params["with_cast"] = ",".join(cast_ids)
+
+    director_names = _parse_csv_list(director)
+    if director_names:
+        director_ids = []
+        for name in director_names:
+            results = _TMDB.search_person(name)
+            if results:
+                person_id = results[0].get("id")
+                if person_id:
+                    director_ids.append(str(person_id))
+        if director_ids:
+            params["with_crew"] = ",".join(director_ids)
+
+    results = _TMDB.discover_movies(**params)
+    payload: list[BrowseResult] = []
+    for item in results[:limit]:
+        release_date = item.get("release_date") or ""
+        year = release_date.split("-")[0] if release_date else None
+        poster_path = item.get("poster_path")
+        poster_url = (
+            f"https://image.tmdb.org/t/p/w342{poster_path}" if poster_path else None
+        )
+        payload.append(
+            BrowseResult(
+                tmdb_id=int(item.get("id")),
+                title=item.get("title") or "",
+                year=year,
+                poster_url=poster_url,
+                overview=item.get("overview"),
+            )
+        )
+    return payload
+
+
 @app.get("/users/{user_id}/ratings", response_model=list[UserRating])
 def get_user_liked_movies(
     user_id: str,
@@ -465,7 +609,11 @@ def get_user_liked_movies(
 
 
 @app.post("/recommendations/seed", response_model=SeedRecommendationResponse)
-def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse:
+def get_seed_recommendations(
+    payload: SeedRequest,
+    year_from: int | None = Query(None, ge=1870, le=2100),
+    year_to: int | None = Query(None, ge=1870, le=2100),
+) -> SeedRecommendationResponse:
     if _HYBRID is None or _MODEL is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     if _ENGINE is None:
@@ -516,15 +664,20 @@ def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse
     else:
         profile = normalize(mapped_profile + text_profile)
 
+    candidate_k = max(payload.n, 200) if year_from or year_to else payload.n
     results = _HYBRID.content.recommend_from_profile(
         profile,
-        n=payload.n,
+        n=candidate_k,
         exclude_movie_ids=movielens_ids,
     )
 
     if _MODEL._movie_titles is not None:
         for entry in results:
             entry["title"] = _MODEL._movie_titles.get(entry["movie_id"], "")
+
+    if year_from or year_to:
+        results = _apply_year_filter(results, year_from, year_to)
+        results = results[: payload.n]
 
     tmdb_map = _map_movielens_to_tmdb([entry["movie_id"] for entry in results])
     if tmdb_map:
@@ -537,7 +690,11 @@ def get_seed_recommendations(payload: SeedRequest) -> SeedRecommendationResponse
 
 
 @app.post("/recommendations/seed-hybrid", response_model=SeedHybridRecommendationResponse)
-def get_seed_hybrid_recommendations(payload: SeedRequest) -> SeedHybridRecommendationResponse:
+def get_seed_hybrid_recommendations(
+    payload: SeedRequest,
+    year_from: int | None = Query(None, ge=1870, le=2100),
+    year_to: int | None = Query(None, ge=1870, le=2100),
+) -> SeedHybridRecommendationResponse:
     if _HYBRID is None or _MODEL is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     if _ENGINE is None:
@@ -630,6 +787,8 @@ def get_seed_hybrid_recommendations(payload: SeedRequest) -> SeedHybridRecommend
         )
 
     results.sort(key=lambda item: item["hybrid_score"], reverse=True)
+    if year_from or year_to:
+        results = _apply_year_filter(results, year_from, year_to)
     results = results[: payload.n]
 
     if _MODEL._movie_titles is not None:
@@ -669,6 +828,8 @@ def get_hybrid_recommendations(
     user_id: str,
     n: int = Query(10, ge=1, le=100),
     include_titles: bool = True,
+    year_from: int | None = Query(None, ge=1870, le=2100),
+    year_to: int | None = Query(None, ge=1870, le=2100),
 ) -> HybridRecommendationResponse:
     if _HYBRID is None or _MODEL is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
@@ -681,6 +842,10 @@ def get_hybrid_recommendations(
     if include_titles and _MODEL._movie_titles is not None:
         for entry in results:
             entry["title"] = _MODEL._movie_titles.get(entry["movie_id"], "")
+
+    if year_from or year_to:
+        results = _apply_year_filter(results, year_from, year_to)
+        results = results[:n]
 
     tmdb_map = _map_movielens_to_tmdb([entry["movie_id"] for entry in results])
     if tmdb_map:

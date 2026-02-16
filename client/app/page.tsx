@@ -77,19 +77,31 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"discover" | "my-space">("discover");
-  const [discoverMode, setDiscoverMode] = useState<"trending" | "upcoming">(
-    "trending"
-  );
+  const [discoverMode, setDiscoverMode] = useState<
+    "trending" | "upcoming" | "filtered"
+  >("trending");
   const [discoverItems, setDiscoverItems] = useState<DiscoverItem[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [likedIds, setLikedIds] = useState<Record<number, boolean>>({});
   const [ratings, setRatings] = useState<Record<number, number>>({});
+  const [discoverGenres, setDiscoverGenres] = useState<{ id: number; name: string }[]>(
+    []
+  );
+  const [discoverYearFrom, setDiscoverYearFrom] = useState("");
+  const [discoverYearTo, setDiscoverYearTo] = useState("");
+  const [discoverRuntimeMin, setDiscoverRuntimeMin] = useState("");
+  const [discoverRuntimeMax, setDiscoverRuntimeMax] = useState("");
+  const [discoverGenreIds, setDiscoverGenreIds] = useState<number[]>([]);
+  const [discoverCast, setDiscoverCast] = useState("");
+  const [discoverDirector, setDiscoverDirector] = useState("");
 
   const [userId, setUserId] = useState("45");
   const [hybridLoading, setHybridLoading] = useState(false);
   const [hybridResults, setHybridResults] = useState<HybridRec[]>([]);
   const [hybridError, setHybridError] = useState<string | null>(null);
+  const [hybridYearFrom, setHybridYearFrom] = useState("");
+  const [hybridYearTo, setHybridYearTo] = useState("");
   const [likedLoading, setLikedLoading] = useState(false);
   const [likedMovies, setLikedMovies] = useState<UserLikedMovie[]>([]);
   const [likedError, setLikedError] = useState<string | null>(null);
@@ -98,6 +110,9 @@ export default function Home() {
   const [seedResults, setSeedResults] = useState<SeedRec[]>([]);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedMode, setSeedMode] = useState<"hybrid" | "content">("hybrid");
+  const [seedGenerated, setSeedGenerated] = useState(false);
+  const [seedYearFrom, setSeedYearFrom] = useState("");
+  const [seedYearTo, setSeedYearTo] = useState("");
 
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -178,14 +193,58 @@ export default function Home() {
 
   useEffect(() => {
     if (activeTab !== "discover") return;
+    if (discoverGenres.length > 0) return;
+    const loadGenres = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/tmdb/genres`);
+        if (!resp.ok) return;
+        const data = (await resp.json()) as { id: number; name: string }[];
+        setDiscoverGenres(data);
+      } catch (err) {
+        setDiscoverGenres([]);
+      }
+    };
+    loadGenres();
+  }, [activeTab, discoverGenres.length]);
+
+  useEffect(() => {
+    if (activeTab !== "discover") return;
     const loadDiscover = async () => {
       setDiscoverLoading(true);
       setDiscoverError(null);
       try {
-        const endpoint =
-          discoverMode === "trending"
-            ? `${API_BASE}/tmdb/trending?limit=12`
-            : `${API_BASE}/tmdb/upcoming?limit=12`;
+        let endpoint = "";
+        if (discoverMode === "filtered") {
+          const params = new URLSearchParams();
+          params.set("limit", "12");
+          if (discoverYearFrom.trim()) {
+            params.set("year_from", discoverYearFrom.trim());
+          }
+          if (discoverYearTo.trim()) {
+            params.set("year_to", discoverYearTo.trim());
+          }
+          if (discoverRuntimeMin.trim()) {
+            params.set("runtime_min", discoverRuntimeMin.trim());
+          }
+          if (discoverRuntimeMax.trim()) {
+            params.set("runtime_max", discoverRuntimeMax.trim());
+          }
+          if (discoverGenreIds.length > 0) {
+            params.set("genre_ids", discoverGenreIds.join(","));
+          }
+          if (discoverCast.trim()) {
+            params.set("cast", discoverCast.trim());
+          }
+          if (discoverDirector.trim()) {
+            params.set("director", discoverDirector.trim());
+          }
+          endpoint = `${API_BASE}/tmdb/discover?${params.toString()}`;
+        } else {
+          endpoint =
+            discoverMode === "trending"
+              ? `${API_BASE}/tmdb/trending?limit=12`
+              : `${API_BASE}/tmdb/upcoming?limit=12`;
+        }
         const resp = await fetch(endpoint);
         if (!resp.ok) {
           throw new Error("Discover API failed.");
@@ -199,7 +258,17 @@ export default function Home() {
       }
     };
     loadDiscover();
-  }, [activeTab, discoverMode]);
+  }, [
+    activeTab,
+    discoverMode,
+    discoverYearFrom,
+    discoverYearTo,
+    discoverRuntimeMin,
+    discoverRuntimeMax,
+    discoverGenreIds,
+    discoverCast,
+    discoverDirector,
+  ]);
 
   useEffect(() => {
     if (!profileOpen) return;
@@ -242,6 +311,29 @@ export default function Home() {
     setRatings((prev) => ({ ...prev, [tmdbId]: value }));
   };
 
+  const toggleDiscoverGenre = (genreId: number) => {
+    setDiscoverGenreIds((prev) =>
+      prev.includes(genreId)
+        ? prev.filter((id) => id !== genreId)
+        : [...prev, genreId]
+    );
+  };
+
+  const applyDiscoverFilters = () => {
+    setDiscoverMode("filtered");
+  };
+
+  const resetDiscoverFilters = () => {
+    setDiscoverYearFrom("");
+    setDiscoverYearTo("");
+    setDiscoverRuntimeMin("");
+    setDiscoverRuntimeMax("");
+    setDiscoverGenreIds([]);
+    setDiscoverCast("");
+    setDiscoverDirector("");
+    setDiscoverMode("trending");
+  };
+
   const loadHybrid = async (targetUserId?: string) => {
     const resolvedUserId = (targetUserId ?? userId).trim();
     if (!resolvedUserId) {
@@ -251,8 +343,15 @@ export default function Home() {
     setHybridLoading(true);
     setHybridError(null);
     try {
+      const params = new URLSearchParams({ n: "10", include_titles: "true" });
+      if (hybridYearFrom.trim()) {
+        params.set("year_from", hybridYearFrom.trim());
+      }
+      if (hybridYearTo.trim()) {
+        params.set("year_to", hybridYearTo.trim());
+      }
       const resp = await fetch(
-        `${API_BASE}/recommendations/hybrid/${resolvedUserId}?n=10&include_titles=true`
+        `${API_BASE}/recommendations/hybrid/${resolvedUserId}?${params.toString()}`
       );
       if (!resp.ok) {
         throw new Error("Hybrid API failed.");
@@ -301,7 +400,11 @@ export default function Home() {
     refreshHybrid(nextId);
   };
 
-  const generateFromSeeds = async () => {
+  const generateFromSeeds = async (modeOverride?: "content" | "hybrid") => {
+    const resolvedMode = modeOverride ?? seedMode;
+    if (modeOverride && seedMode !== modeOverride) {
+      setSeedMode(modeOverride);
+    }
     if (selected.length < 3) {
       setSeedError("Pick at least 3 movies.");
       return;
@@ -309,10 +412,20 @@ export default function Home() {
     setSeedLoading(true);
     setSeedError(null);
     try {
-      const endpoint =
-        seedMode === "hybrid"
+      const endpointBase =
+        resolvedMode === "hybrid"
           ? `${API_BASE}/recommendations/seed-hybrid`
           : `${API_BASE}/recommendations/seed`;
+      const params = new URLSearchParams();
+      if (seedYearFrom.trim()) {
+        params.set("year_from", seedYearFrom.trim());
+      }
+      if (seedYearTo.trim()) {
+        params.set("year_to", seedYearTo.trim());
+      }
+      const endpoint = params.toString()
+        ? `${endpointBase}?${params.toString()}`
+        : endpointBase;
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -326,6 +439,7 @@ export default function Home() {
       }
       const data = (await resp.json()) as { results: SeedRec[] };
       setSeedResults(data.results || []);
+      setSeedGenerated(true);
       if (activeTab === "discover") {
         setActiveTab("my-space");
       }
@@ -337,9 +451,9 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (!seedGenerated) return;
     if (seedLoading) return;
     if (selected.length < 3) return;
-    if (seedResults.length === 0) return;
     setSeedResults([]);
     generateFromSeeds();
   }, [seedMode]);
@@ -747,7 +861,7 @@ export default function Home() {
                   </div>
                 ))}
                 <button
-                  onClick={generateFromSeeds}
+                  onClick={() => generateFromSeeds("content")}
                   className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-3 py-2 text-xs font-semibold text-black"
                 >
                   {seedLoading ? "Generating..." : "Generate"}
@@ -771,7 +885,9 @@ export default function Home() {
                   <h2 className="text-2xl font-semibold">
                     {discoverMode === "trending"
                       ? "Hyped right now"
-                      : "Upcoming releases"}
+                      : discoverMode === "upcoming"
+                        ? "Upcoming releases"
+                        : "Filtered picks"}
                   </h2>
                 </div>
                 <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
@@ -796,6 +912,94 @@ export default function Home() {
                     }`}
                   >
                     Upcoming
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscoverMode("filtered")}
+                    className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
+                      discoverMode === "filtered"
+                        ? "bg-[color:var(--accent)] text-black"
+                        : "text-[color:var(--muted)]"
+                    }`}
+                  >
+                    Filtered
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <input
+                    placeholder="Year from"
+                    value={discoverYearFrom}
+                    onChange={(event) => setDiscoverYearFrom(event.target.value)}
+                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <input
+                    placeholder="Year to"
+                    value={discoverYearTo}
+                    onChange={(event) => setDiscoverYearTo(event.target.value)}
+                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <input
+                    placeholder="Runtime min"
+                    value={discoverRuntimeMin}
+                    onChange={(event) => setDiscoverRuntimeMin(event.target.value)}
+                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <input
+                    placeholder="Runtime max"
+                    value={discoverRuntimeMax}
+                    onChange={(event) => setDiscoverRuntimeMax(event.target.value)}
+                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <input
+                    placeholder="Cast (comma separated)"
+                    value={discoverCast}
+                    onChange={(event) => setDiscoverCast(event.target.value)}
+                    className="md:col-span-2 rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <input
+                    placeholder="Director (comma separated)"
+                    value={discoverDirector}
+                    onChange={(event) => setDiscoverDirector(event.target.value)}
+                    className="md:col-span-2 rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                </div>
+                {discoverGenres.length > 0 ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {discoverGenres.map((genre) => {
+                      const active = discoverGenreIds.includes(genre.id);
+                      return (
+                        <button
+                          key={`genre-${genre.id}`}
+                          type="button"
+                          onClick={() => toggleDiscoverGenre(genre.id)}
+                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] transition focus:outline-none focus-visible:outline-none ${
+                            active
+                              ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                              : "border-white/10 text-[color:var(--muted)]"
+                          }`}
+                        >
+                          {genre.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={applyDiscoverFilters}
+                    className="cursor-pointer rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
+                  >
+                    Apply filters
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetDiscoverFilters}
+                    className="cursor-pointer rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                  >
+                    Reset
                   </button>
                 </div>
               </div>
@@ -971,6 +1175,18 @@ export default function Home() {
                 placeholder="User id"
                 className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
               />
+              <input
+                value={hybridYearFrom}
+                onChange={(event) => setHybridYearFrom(event.target.value)}
+                placeholder="Year from"
+                className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
+              />
+              <input
+                value={hybridYearTo}
+                onChange={(event) => setHybridYearTo(event.target.value)}
+                placeholder="Year to"
+                className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
+              />
               <button
                 onClick={randomizeUser}
                 className="cursor-pointer rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
@@ -1118,7 +1334,20 @@ export default function Home() {
                 </p>
                 <h3 className="text-xl font-semibold">Taste-Based Results</h3>
               </div>
-              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={seedYearFrom}
+                  onChange={(event) => setSeedYearFrom(event.target.value)}
+                  placeholder="Year from"
+                  className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                />
+                <input
+                  value={seedYearTo}
+                  onChange={(event) => setSeedYearTo(event.target.value)}
+                  placeholder="Year to"
+                  className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                />
+                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
                 <button
                   onClick={() => setSeedMode("hybrid")}
                   disabled={seedLoading}
@@ -1141,6 +1370,7 @@ export default function Home() {
                 >
                   Content
                 </button>
+                </div>
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-5">

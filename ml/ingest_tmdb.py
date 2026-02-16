@@ -11,7 +11,7 @@ from typing import Iterable
 import requests
 from sqlalchemy.dialects.postgresql import insert
 
-from ml.config import MOVIES_FILE
+from ml.config import ARTIFACTS_DIR, MOVIES_FILE
 from ml.db import get_engine, init_db, movielens_tmdb_map, tmdb_movies
 from ml.tmdb_client import TMDBClient
 
@@ -51,7 +51,11 @@ def _build_content_text(bundle: dict[str, object]) -> str:
     return " ".join(part for part in parts if part).strip().lower()
 
 
-def ingest(limit: int | None, sleep_s: float) -> None:
+def _write_failure(handle, movie_id: int, title: str, year: str | None, reason: str) -> None:
+    handle.write(f"{movie_id},\"{title.replace('"', '""')}\",{year or ''},\"{reason.replace('"', '""')}\"\n")
+
+
+def ingest(limit: int | None, sleep_s: float, failures_path: Path | None) -> None:
     engine = get_engine()
     init_db(engine)
     client = TMDBClient.from_env()
@@ -66,6 +70,12 @@ def ingest(limit: int | None, sleep_s: float) -> None:
 
     count = 0
     errors = 0
+    failures_handle = None
+    if failures_path is not None:
+        failures_path.parent.mkdir(parents=True, exist_ok=True)
+        failures_handle = failures_path.open("w", encoding="utf-8", newline="")
+        failures_handle.write("movie_id,title,year,reason\n")
+
     for movie_id, title, year in _iter_movies(MOVIES_FILE):
         if movie_id in mapped:
             continue
@@ -73,10 +83,26 @@ def ingest(limit: int | None, sleep_s: float) -> None:
         try:
             results = client.search_movie(title=title, year=year)
             if not results:
+                if failures_handle is not None:
+                    _write_failure(
+                        failures_handle,
+                        movie_id,
+                        title,
+                        year,
+                        "no_results",
+                    )
                 continue
 
             tmdb_id = results[0].get("id")
             if not tmdb_id:
+                if failures_handle is not None:
+                    _write_failure(
+                        failures_handle,
+                        movie_id,
+                        title,
+                        year,
+                        "missing_tmdb_id",
+                    )
                 continue
             if int(tmdb_id) in mapped_tmdb:
                 continue
@@ -87,6 +113,14 @@ def ingest(limit: int | None, sleep_s: float) -> None:
             errors += 1
             if errors % 10 == 1:
                 print(f"TMDB request error (sample): {exc}")
+            if failures_handle is not None:
+                _write_failure(
+                    failures_handle,
+                    movie_id,
+                    title,
+                    year,
+                    f"request_error: {exc}",
+                )
             time.sleep(sleep_s)
             continue
 
@@ -139,6 +173,9 @@ def ingest(limit: int | None, sleep_s: float) -> None:
             break
         time.sleep(sleep_s)
 
+    if failures_handle is not None:
+        failures_handle.close()
+        print(f"Failure log saved to {failures_path}")
     print(f"Ingested {count} movies (errors: {errors})")
 
 
@@ -146,9 +183,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest TMDB metadata")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of movies")
     parser.add_argument("--sleep", type=float, default=0.25, help="Sleep between requests")
+    parser.add_argument(
+        "--failures",
+        type=str,
+        default=str(ARTIFACTS_DIR / "tmdb_ingest_failures.csv"),
+        help="CSV path to log failed matches",
+    )
     args = parser.parse_args()
 
-    ingest(limit=args.limit, sleep_s=args.sleep)
+    failures_path = Path(args.failures) if args.failures else None
+    ingest(limit=args.limit, sleep_s=args.sleep, failures_path=failures_path)
 
 
 if __name__ == "__main__":
