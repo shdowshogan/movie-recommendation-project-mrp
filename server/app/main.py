@@ -540,9 +540,10 @@ def get_seed_hybrid_recommendations(payload: SeedRequest) -> SeedHybridRecommend
     else:
         profile = normalize(mapped_profile + text_profile)
 
+    candidate_k = int(os.getenv("SEED_HYBRID_CANDIDATE_K", "200"))
     content_results = _HYBRID.content.recommend_from_profile(
         profile,
-        n=payload.n,
+        n=max(payload.n, candidate_k),
         exclude_movie_ids=movielens_ids,
     )
 
@@ -579,6 +580,9 @@ def get_seed_hybrid_recommendations(payload: SeedRequest) -> SeedHybridRecommend
                 "hybrid_score": float(hybrid_score),
             }
         )
+
+    results.sort(key=lambda item: item["hybrid_score"], reverse=True)
+    results = results[: payload.n]
 
     if _MODEL._movie_titles is not None:
         for entry in results:

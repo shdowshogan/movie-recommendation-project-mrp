@@ -286,6 +286,13 @@ export default function Home() {
     }
   };
 
+  useEffect(() => {
+    if (seedLoading) return;
+    if (selected.length < 3) return;
+    if (seedResults.length === 0) return;
+    generateFromSeeds();
+  }, [seedMode]);
+
   const handleRegister = async () => {
     setAuthMode("register");
     if (!authEmail && !authPassword) {
