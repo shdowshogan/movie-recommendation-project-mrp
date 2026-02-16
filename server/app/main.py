@@ -43,7 +43,7 @@ _AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() in {
     "true",
     "yes",
 }
-_PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_PWD_CONTEXT = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 class Recommendation(BaseModel):

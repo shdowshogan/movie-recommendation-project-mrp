@@ -76,6 +76,10 @@ export default function Home() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordTips, setShowPasswordTips] = useState(false);
+
+  const passwordTooShort = authPassword.length > 0 && authPassword.length < 8;
 
   const selectedIds = useMemo(
     () => new Set(selected.map((item) => item.tmdb_id)),
@@ -118,6 +122,12 @@ export default function Home() {
 
     return () => clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    if (showPasswordTips && !passwordTooShort) {
+      setShowPasswordTips(false);
+    }
+  }, [passwordTooShort, showPasswordTips]);
 
   useEffect(() => {
     const loadMe = async () => {
@@ -203,6 +213,14 @@ export default function Home() {
   const handleRegister = async () => {
     if (!authEmail || !authPassword) {
       setAuthError("Enter email and password.");
+      if (!authPassword) {
+        setShowPasswordTips(true);
+      }
+      return;
+    }
+    if (passwordTooShort) {
+      setAuthError("Password must be at least 8 characters.");
+      setShowPasswordTips(true);
       return;
     }
     setAuthLoading(true);
@@ -215,10 +233,14 @@ export default function Home() {
         body: JSON.stringify({ email: authEmail, password: authPassword }),
       });
       if (!resp.ok) {
+        if (resp.status === 422) {
+          setShowPasswordTips(true);
+        }
         throw new Error("Register failed");
       }
       const data = (await resp.json()) as { user: AuthUser };
       setAuthUser(data.user);
+      setShowPasswordTips(false);
     } catch (err) {
       setAuthError("Registration failed.");
     } finally {
@@ -323,11 +345,18 @@ export default function Home() {
                 />
                 <input
                   placeholder="Password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={authPassword}
                   onChange={(event) => setAuthPassword(event.target.value)}
                   className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="-mt-1 w-fit cursor-pointer text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
+                >
+                  {showPassword ? "Hide password" : "See password"}
+                </button>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={handleLogin}
@@ -364,6 +393,11 @@ export default function Home() {
               onChange={(event) => setQuery(event.target.value)}
               className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
             />
+            {showPasswordTips && passwordTooShort ? (
+              <p className="text-xs text-[#ff8a8a]">
+                Password tip: use at least 8 characters.
+              </p>
+            ) : null}
             <button
               onClick={handleSearch}
               className="w-full cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
