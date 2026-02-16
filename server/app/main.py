@@ -13,7 +13,9 @@ import jwt
 from ml.inference.content import ContentRecommender
 from ml.inference.hybrid import HybridConfig, HybridRecommender
 from ml.inference.recommender import CFRecommender
+from ml.config import MOVIES_FILE, RATINGS_FILE
 from ml.db import get_engine, init_db, movielens_tmdb_map, users
+from ml.training.io import get_user_ratings as get_user_ratings_rows
 from ml.tmdb_client import TMDBClient
 from sqlalchemy import insert, select
 from sklearn.preprocessing import normalize
@@ -112,6 +114,13 @@ class SeedHybridRecommendationResponse(BaseModel):
 class HybridRecommendationResponse(BaseModel):
     user_id: str
     results: list[HybridRecommendation]
+
+
+class UserRating(BaseModel):
+    movie_id: str
+    rating: float
+    title: str | None = None
+    poster_url: str | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -414,6 +423,45 @@ def get_upcoming_movies(
             )
         )
     return payload
+
+
+@app.get("/users/{user_id}/ratings", response_model=list[UserRating])
+def get_user_liked_movies(
+    user_id: str,
+    limit: int = Query(6, ge=1, le=40),
+    min_rating: float = Query(4.0, ge=0.0, le=5.0),
+) -> list[UserRating]:
+    try:
+        rows = get_user_ratings_rows(
+            user_id=user_id,
+            ratings_path=RATINGS_FILE,
+            movies_path=MOVIES_FILE,
+            limit=None,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    filtered = [row for row in rows if float(row.get("rating", 0)) >= min_rating]
+    filtered = filtered[:limit]
+
+    results: list[dict[str, Any]] = []
+    for row in filtered:
+        results.append(
+            {
+                "movie_id": str(row.get("movie_id")),
+                "rating": float(row.get("rating", 0)),
+                "title": row.get("title") or None,
+            }
+        )
+
+    tmdb_map = _map_movielens_to_tmdb([item["movie_id"] for item in results])
+    if tmdb_map:
+        for item in results:
+            tmdb_id = tmdb_map.get(item["movie_id"])
+            if tmdb_id:
+                item["poster_url"] = _poster_url_for_tmdb(tmdb_id)
+
+    return results
 
 
 @app.post("/recommendations/seed", response_model=SeedRecommendationResponse)

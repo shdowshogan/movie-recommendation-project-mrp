@@ -26,6 +26,13 @@ type SeedRec = {
   poster_url?: string | null;
 };
 
+type UserLikedMovie = {
+  movie_id: string;
+  rating: number;
+  title?: string | null;
+  poster_url?: string | null;
+};
+
 type DiscoverItem = {
   tmdb_id: number;
   title: string;
@@ -61,6 +68,7 @@ const picks = [
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+const USER_ID_MAX = 138493;
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -82,6 +90,9 @@ export default function Home() {
   const [hybridLoading, setHybridLoading] = useState(false);
   const [hybridResults, setHybridResults] = useState<HybridRec[]>([]);
   const [hybridError, setHybridError] = useState<string | null>(null);
+  const [likedLoading, setLikedLoading] = useState(false);
+  const [likedMovies, setLikedMovies] = useState<UserLikedMovie[]>([]);
+  const [likedError, setLikedError] = useState<string | null>(null);
 
   const [seedLoading, setSeedLoading] = useState(false);
   const [seedResults, setSeedResults] = useState<SeedRec[]>([]);
@@ -231,8 +242,9 @@ export default function Home() {
     setRatings((prev) => ({ ...prev, [tmdbId]: value }));
   };
 
-  const loadHybrid = async () => {
-    if (!userId.trim()) {
+  const loadHybrid = async (targetUserId?: string) => {
+    const resolvedUserId = (targetUserId ?? userId).trim();
+    if (!resolvedUserId) {
       setHybridError("Enter a user id.");
       return;
     }
@@ -240,7 +252,7 @@ export default function Home() {
     setHybridError(null);
     try {
       const resp = await fetch(
-        `${API_BASE}/recommendations/hybrid/${userId}?n=10&include_titles=true`
+        `${API_BASE}/recommendations/hybrid/${resolvedUserId}?n=10&include_titles=true`
       );
       if (!resp.ok) {
         throw new Error("Hybrid API failed.");
@@ -252,6 +264,41 @@ export default function Home() {
     } finally {
       setHybridLoading(false);
     }
+  };
+
+  const loadUserLikes = async (targetUserId?: string) => {
+    const resolvedUserId = (targetUserId ?? userId).trim();
+    if (!resolvedUserId) return;
+    setLikedLoading(true);
+    setLikedError(null);
+    try {
+      const resp = await fetch(
+        `${API_BASE}/users/${resolvedUserId}/ratings?limit=6&min_rating=4`
+      );
+      if (!resp.ok) {
+        throw new Error("Liked movies API failed.");
+      }
+      const data = (await resp.json()) as UserLikedMovie[];
+      setLikedMovies(data);
+    } catch (err) {
+      setLikedError("User likes unavailable.");
+      setLikedMovies([]);
+    } finally {
+      setLikedLoading(false);
+    }
+  };
+
+  const refreshHybrid = async (targetUserId?: string) => {
+    const resolvedUserId = targetUserId ?? userId;
+    setHybridResults([]);
+    setLikedMovies([]);
+    await Promise.all([loadHybrid(resolvedUserId), loadUserLikes(resolvedUserId)]);
+  };
+
+  const randomizeUser = () => {
+    const nextId = String(Math.floor(Math.random() * USER_ID_MAX) + 1);
+    setUserId(nextId);
+    refreshHybrid(nextId);
   };
 
   const generateFromSeeds = async () => {
@@ -279,6 +326,9 @@ export default function Home() {
       }
       const data = (await resp.json()) as { results: SeedRec[] };
       setSeedResults(data.results || []);
+      if (activeTab === "discover") {
+        setActiveTab("my-space");
+      }
     } catch (err) {
       setSeedError("Seed recommendations unavailable. Start the server.");
     } finally {
@@ -290,6 +340,7 @@ export default function Home() {
     if (seedLoading) return;
     if (selected.length < 3) return;
     if (seedResults.length === 0) return;
+    setSeedResults([]);
     generateFromSeeds();
   }, [seedMode]);
 
@@ -921,18 +972,99 @@ export default function Home() {
                 className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
               />
               <button
-                onClick={loadHybrid}
+                onClick={randomizeUser}
+                className="cursor-pointer rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+              >
+                Random user
+              </button>
+              <button
+                onClick={() => refreshHybrid()}
                 className="cursor-pointer rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
               >
-                {hybridLoading ? "Loading" : "Load"}
+                {hybridLoading ? "Loading" : "Regenerate"}
               </button>
             </div>
+          </div>
+          {likedError ? (
+            <p className="text-xs text-[#ffb4a2]">{likedError}</p>
+          ) : null}
+          <div className="grid gap-4 md:grid-cols-6">
+            {likedLoading
+              ? Array.from({ length: 6 }).map((_, idx) => (
+                  <div
+                    key={`liked-${idx}`}
+                    className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                  >
+                    <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                    <div className="space-y-1">
+                      <div className="h-3 w-2/3 rounded-full bg-white/10" />
+                      <div className="h-3 w-1/2 rounded-full bg-white/10" />
+                    </div>
+                  </div>
+                ))
+              : likedMovies.length === 0
+                ? Array.from({ length: 3 }).map((_, idx) => (
+                    <div
+                      key={`liked-empty-${idx}`}
+                      className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                    >
+                      <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                      <div className="space-y-1">
+                        <p className="text-xs text-[color:var(--muted)]">
+                          No likes yet
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                : likedMovies.map((item) => (
+                    <div
+                      key={`liked-${item.movie_id}`}
+                      className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                    >
+                      <div className="aspect-[2/3] overflow-hidden rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
+                        {item.poster_url ? (
+                          <img
+                            src={item.poster_url}
+                            alt={item.title || "Liked movie"}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-black/40 text-[10px] uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                            No poster
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold">
+                          {item.title || `Movie ${item.movie_id}`}
+                        </p>
+                        <p className="text-xs text-[color:var(--muted)]">
+                          Rated {item.rating.toFixed(1)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
           </div>
           {hybridError ? (
             <p className="text-xs text-[#ffb4a2]">{hybridError}</p>
           ) : null}
           <div className="grid gap-4 md:grid-cols-5">
-            {hybridResults.length === 0
+            {hybridLoading
+              ? Array.from({ length: 5 }).map((_, idx) => (
+                  <div
+                    key={`row-loading-${idx}`}
+                    className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                  >
+                    <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                    <div className="space-y-1">
+                      <div className="h-3 w-2/3 rounded-full bg-white/10" />
+                      <div className="h-3 w-1/2 rounded-full bg-white/10" />
+                    </div>
+                  </div>
+                ))
+              : hybridResults.length === 0
               ? Array.from({ length: 5 }).map((_, idx) => (
                   <div
                     key={`row-${idx}`}
@@ -1012,7 +1144,20 @@ export default function Home() {
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-5">
-              {seedResults.length === 0
+              {seedLoading ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <div
+                    key={`seed-loading-${idx}`}
+                    className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
+                  >
+                    <div className="aspect-[2/3] rounded-xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                    <div className="space-y-1">
+                      <div className="h-3 w-2/3 rounded-full bg-white/10" />
+                      <div className="h-3 w-1/2 rounded-full bg-white/10" />
+                    </div>
+                  </div>
+                ))
+              ) : seedResults.length === 0
                 ? Array.from({ length: 5 }).map((_, idx) => (
                     <div
                       key={`seed-${idx}`}
