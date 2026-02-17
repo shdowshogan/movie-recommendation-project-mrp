@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type SearchResult = {
+type Pickable = {
   tmdb_id: number;
   title: string;
   year?: string | null;
   poster_url?: string | null;
 };
+
+type SearchResult = Pickable;
 
 type HybridRec = {
   movie_id: string;
@@ -33,17 +35,31 @@ type UserLikedMovie = {
   poster_url?: string | null;
 };
 
-type DiscoverItem = {
+type DiscoverItem = Pickable & {
+  overview?: string | null;
+};
+
+type MovieDetails = {
   tmdb_id: number;
   title: string;
   year?: string | null;
-  poster_url?: string | null;
   overview?: string | null;
+  runtime?: number | null;
+  director?: string | null;
+  cast?: string[];
+  genres?: string[];
+  keywords?: string[];
 };
 
 type AuthUser = {
   id: number;
   email: string;
+};
+
+type UserPreferences = {
+  liked_ids: number[];
+  ratings: Record<string, number>;
+  pick_tray: Pickable[];
 };
 
 const heroPicks = [
@@ -73,13 +89,14 @@ const USER_ID_MAX = 138493;
 export default function Home() {
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [selected, setSelected] = useState<SearchResult[]>([]);
+  const [selected, setSelected] = useState<Pickable[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"discover" | "my-space">("discover");
   const [discoverMode, setDiscoverMode] = useState<
     "trending" | "upcoming" | "filtered"
   >("trending");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [discoverItems, setDiscoverItems] = useState<DiscoverItem[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
@@ -88,6 +105,9 @@ export default function Home() {
   const [discoverGenres, setDiscoverGenres] = useState<{ id: number; name: string }[]>(
     []
   );
+  const [discoverPage, setDiscoverPage] = useState(1);
+  const [discoverHasMore, setDiscoverHasMore] = useState(true);
+  const [discoverLoadingMore, setDiscoverLoadingMore] = useState(false);
   const [discoverYearFrom, setDiscoverYearFrom] = useState("");
   const [discoverYearTo, setDiscoverYearTo] = useState("");
   const [discoverRuntimeMin, setDiscoverRuntimeMin] = useState("");
@@ -95,6 +115,15 @@ export default function Home() {
   const [discoverGenreIds, setDiscoverGenreIds] = useState<number[]>([]);
   const [discoverCast, setDiscoverCast] = useState("");
   const [discoverDirector, setDiscoverDirector] = useState("");
+  const discoverSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [expandedMovieId, setExpandedMovieId] = useState<number | null>(null);
+  const [detailsById, setDetailsById] = useState<Partial<Record<number, MovieDetails>>>(
+    {}
+  );
+  const [detailsLoadingId, setDetailsLoadingId] = useState<number | null>(null);
+  const [detailsErrors, setDetailsErrors] = useState<Partial<Record<number, string>>>(
+    {}
+  );
 
   const [userId, setUserId] = useState("45");
   const [hybridLoading, setHybridLoading] = useState(false);
@@ -124,12 +153,54 @@ export default function Home() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const profileRef = useRef<HTMLDivElement | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const prefsHydratingRef = useRef(false);
+  const prefsSaveTimerRef = useRef<number | null>(null);
 
   const passwordTooShort = authPassword.length > 0 && authPassword.length < 8;
 
   const selectedIds = useMemo(
     () => new Set(selected.map((item) => item.tmdb_id)),
     [selected]
+  );
+
+  const searchQueryActive = query.trim().length >= 2;
+
+  const movieById = useMemo(() => {
+    const map = new Map<number, Pickable & { overview?: string | null }>();
+    for (const item of discoverItems) {
+      map.set(item.tmdb_id, item);
+    }
+    for (const item of searchResults) {
+      if (!map.has(item.tmdb_id)) {
+        map.set(item.tmdb_id, item);
+      }
+    }
+    return map;
+  }, [discoverItems, searchResults]);
+
+  const discoverFiltersKey = useMemo(
+    () =>
+      [
+        discoverMode,
+        discoverYearFrom,
+        discoverYearTo,
+        discoverRuntimeMin,
+        discoverRuntimeMax,
+        discoverGenreIds.join(","),
+        discoverCast,
+        discoverDirector,
+      ].join("|"),
+    [
+      discoverMode,
+      discoverYearFrom,
+      discoverYearTo,
+      discoverRuntimeMin,
+      discoverRuntimeMax,
+      discoverGenreIds,
+      discoverCast,
+      discoverDirector,
+    ]
   );
 
   const handleSearch = async () => {
@@ -176,6 +247,66 @@ export default function Home() {
   }, [passwordTooShort, showPasswordTips]);
 
   useEffect(() => {
+    const loadPreferences = async () => {
+      if (!authUser) return;
+      prefsHydratingRef.current = true;
+      try {
+        const resp = await fetch(`${API_BASE}/users/me/preferences`, {
+          credentials: "include",
+        });
+        if (!resp.ok) return;
+        const data = (await resp.json()) as UserPreferences;
+        if (data.liked_ids) {
+          const likedMap: Record<number, boolean> = {};
+          data.liked_ids.forEach((id) => {
+            likedMap[id] = true;
+          });
+          setLikedIds(likedMap);
+        }
+        if (data.ratings) {
+          const ratingMap: Record<number, number> = {};
+          Object.entries(data.ratings).forEach(([key, value]) => {
+            const id = Number(key);
+            if (!Number.isNaN(id)) {
+              ratingMap[id] = value;
+            }
+          });
+          setRatings(ratingMap);
+        }
+        if (data.pick_tray) {
+          setSelected(data.pick_tray);
+        }
+      } finally {
+        prefsHydratingRef.current = false;
+      }
+    };
+    loadPreferences();
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (prefsHydratingRef.current) return;
+    if (prefsSaveTimerRef.current) {
+      window.clearTimeout(prefsSaveTimerRef.current);
+    }
+    prefsSaveTimerRef.current = window.setTimeout(async () => {
+      const payload: UserPreferences = {
+        liked_ids: Object.keys(likedIds).filter((key) => likedIds[Number(key)]).map(Number),
+        ratings: Object.fromEntries(
+          Object.entries(ratings).map(([key, value]) => [String(key), value])
+        ),
+        pick_tray: selected,
+      };
+      await fetch(`${API_BASE}/users/me/preferences`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+    }, 500);
+  }, [authUser, likedIds, ratings, selected]);
+
+  useEffect(() => {
     const loadMe = async () => {
       try {
         const resp = await fetch(`${API_BASE}/auth/me`, {
@@ -208,15 +339,48 @@ export default function Home() {
   }, [activeTab, discoverGenres.length]);
 
   useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 32;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(img, 0, 0, size, size);
+      const dataUrl = canvas.toDataURL("image/png");
+      document.documentElement.style.setProperty(
+        "--heart-cursor",
+        `url("${dataUrl}") 16 16, pointer`
+      );
+    };
+    img.src = "/heart-red-svgrepo-com.svg";
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "discover") return;
+    setDiscoverItems([]);
+    setDiscoverPage(1);
+    setDiscoverHasMore(true);
+  }, [activeTab, discoverFiltersKey]);
+
+  useEffect(() => {
     if (activeTab !== "discover") return;
     const loadDiscover = async () => {
-      setDiscoverLoading(true);
+      const pageSize = 12;
+      if (discoverPage === 1) {
+        setDiscoverLoading(true);
+      } else {
+        setDiscoverLoadingMore(true);
+      }
       setDiscoverError(null);
       try {
         let endpoint = "";
         if (discoverMode === "filtered") {
           const params = new URLSearchParams();
-          params.set("limit", "12");
+          params.set("limit", String(pageSize));
+          params.set("page", String(discoverPage));
           if (discoverYearFrom.trim()) {
             params.set("year_from", discoverYearFrom.trim());
           }
@@ -242,32 +406,38 @@ export default function Home() {
         } else {
           endpoint =
             discoverMode === "trending"
-              ? `${API_BASE}/tmdb/trending?limit=12`
-              : `${API_BASE}/tmdb/upcoming?limit=12`;
+              ? `${API_BASE}/tmdb/trending?limit=${pageSize}&page=${discoverPage}`
+              : `${API_BASE}/tmdb/upcoming?limit=${pageSize}&page=${discoverPage}`;
         }
         const resp = await fetch(endpoint);
         if (!resp.ok) {
           throw new Error("Discover API failed.");
         }
         const data = (await resp.json()) as DiscoverItem[];
-        setDiscoverItems(data);
+        setDiscoverItems((prev) => {
+          if (discoverPage === 1) return data;
+          const merged = new Map<number, DiscoverItem>();
+          for (const item of prev) {
+            merged.set(item.tmdb_id, item);
+          }
+          for (const item of data) {
+            merged.set(item.tmdb_id, item);
+          }
+          return Array.from(merged.values());
+        });
+        setDiscoverHasMore(data.length === pageSize);
       } catch (err) {
         setDiscoverError("Discover feed unavailable. Start the server.");
       } finally {
         setDiscoverLoading(false);
+        setDiscoverLoadingMore(false);
       }
     };
     loadDiscover();
   }, [
     activeTab,
-    discoverMode,
-    discoverYearFrom,
-    discoverYearTo,
-    discoverRuntimeMin,
-    discoverRuntimeMax,
-    discoverGenreIds,
-    discoverCast,
-    discoverDirector,
+    discoverPage,
+    discoverFiltersKey,
   ]);
 
   useEffect(() => {
@@ -293,7 +463,56 @@ export default function Home() {
     };
   }, [profileOpen]);
 
-  const addPick = (item: SearchResult) => {
+  useEffect(() => {
+    if (activeTab !== "discover") return;
+    if (searchQueryActive) return;
+    if (!discoverHasMore) return;
+    const sentinel = discoverSentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (discoverLoading || discoverLoadingMore) return;
+        setDiscoverPage((prev) => prev + 1);
+      },
+      { rootMargin: "200px" }
+    );
+
+    observer.observe(sentinel);
+    return () => {
+      observer.disconnect();
+    };
+  }, [
+    activeTab,
+    searchQueryActive,
+    discoverHasMore,
+    discoverLoading,
+    discoverLoadingMore,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== "discover") return;
+    if (searchQueryActive) return;
+    if (!discoverHasMore) return;
+    if (discoverLoading || discoverLoadingMore) return;
+    const sentinel = discoverSentinelRef.current;
+    if (!sentinel) return;
+    const rect = sentinel.getBoundingClientRect();
+    if (rect.top <= window.innerHeight + 200) {
+      setDiscoverPage((prev) => prev + 1);
+    }
+  }, [
+    activeTab,
+    searchQueryActive,
+    discoverHasMore,
+    discoverLoading,
+    discoverLoadingMore,
+    discoverItems.length,
+  ]);
+
+  const addPick = (item: Pickable) => {
     if (selectedIds.has(item.tmdb_id)) return;
     if (selected.length >= 10) return;
     setSelected((prev) => [...prev, item]);
@@ -332,6 +551,40 @@ export default function Home() {
     setDiscoverCast("");
     setDiscoverDirector("");
     setDiscoverMode("trending");
+  };
+
+  const loadMovieDetails = async (tmdbId: number) => {
+    if (detailsById[tmdbId]) return;
+    if (detailsLoadingId === tmdbId) return;
+    setDetailsLoadingId(tmdbId);
+    setDetailsErrors((prev) => {
+      if (!prev[tmdbId]) return prev;
+      const next = { ...prev };
+      delete next[tmdbId];
+      return next;
+    });
+    try {
+      const resp = await fetch(`${API_BASE}/tmdb/bundle/${tmdbId}`);
+      if (!resp.ok) {
+        throw new Error("Movie details unavailable.");
+      }
+      const data = (await resp.json()) as MovieDetails;
+      setDetailsById((prev) => ({ ...prev, [tmdbId]: data }));
+    } catch (err) {
+      setDetailsErrors((prev) => ({ ...prev, [tmdbId]: "Movie details unavailable." }));
+    } finally {
+      setDetailsLoadingId((prev) => (prev === tmdbId ? null : prev));
+    }
+  };
+
+  const toggleExpandedMovie = (tmdbId: number) => {
+    setExpandedMovieId((prev) => {
+      const next = prev === tmdbId ? null : tmdbId;
+      if (next === tmdbId) {
+        loadMovieDetails(tmdbId);
+      }
+      return next;
+    });
   };
 
   const loadHybrid = async (targetUserId?: string) => {
@@ -565,20 +818,141 @@ export default function Home() {
     }
   };
 
+  const renderMovieCard = (
+    item: Pickable & { overview?: string | null },
+    source: "discover" | "search"
+  ) => {
+    const details = detailsById[item.tmdb_id];
+    const overview = details?.overview || item.overview;
+    const year = details?.year || item.year;
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => toggleExpandedMovie(item.tmdb_id)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            toggleExpandedMovie(item.tmdb_id);
+          }
+        }}
+        className="group relative flex cursor-pointer flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:border-white/20 hover:bg-white/10 focus:outline-none focus-visible:outline-none animate-fade-up"
+      >
+        <div className="aspect-[2/3] overflow-hidden rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
+          {item.poster_url ? (
+            <img
+              src={item.poster_url}
+              alt={item.title}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-[color:var(--foreground)]">
+              {item.title}
+            </p>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                addPick(item);
+              }}
+              disabled={selectedIds.has(item.tmdb_id) || selected.length >= 10}
+              className="cursor-pointer rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--foreground)] disabled:opacity-40"
+            >
+              {selectedIds.has(item.tmdb_id) ? "Added" : "Add"}
+            </button>
+          </div>
+          <p className="text-xs text-[color:var(--muted)]">
+            {year || "Unknown year"}
+          </p>
+          {overview ? (
+            <p className="line-clamp-3 text-xs text-[color:var(--muted)]">
+              {overview}
+            </p>
+          ) : null}
+        </div>
+        {source === "discover" ? (
+          <div className="mt-auto flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleLike(item.tmdb_id);
+              }}
+              className={`cursor-heart flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] transition focus:outline-none focus-visible:outline-none ${
+                likedIds[item.tmdb_id]
+                  ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                  : "border-white/10 text-[color:var(--muted)]"
+              }`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3 w-3"
+                fill={likedIds[item.tmdb_id] ? "currentColor" : "none"}
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M20.8 5.7c-1.5-1.6-4-1.6-5.5 0L12 9l-3.3-3.3c-1.5-1.6-4-1.6-5.5 0-1.8 1.8-1.6 4.6.2 6.3L12 21l8.6-9c1.8-1.7 2-4.5.2-6.3Z" />
+              </svg>
+              Like
+            </button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: 5 }).map((_, idx) => {
+                const value = idx + 1;
+                const active = (ratings[item.tmdb_id] || 0) >= value;
+                return (
+                  <button
+                    key={`${item.tmdb_id}-rating-${value}`}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setRating(item.tmdb_id, value);
+                    }}
+                    className={`transition focus:outline-none focus-visible:outline-none ${
+                      active ? "text-[color:var(--accent)]" : "text-white/30"
+                    }`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-3.5 w-3.5"
+                      fill={active ? "currentColor" : "none"}
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 3.5 14.6 8l5.1.8-3.7 3.7.9 5.1L12 15.8 7.1 17.6l.9-5.1-3.7-3.7 5.1-.8L12 3.5Z" />
+                    </svg>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#1a1a25_0%,_#0b0b0f_45%,_#050507_100%)] text-[color:var(--foreground)]">
       <header className="mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto] items-center px-6 pt-8 md:grid-cols-3">
-        <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setInfoOpen(true)}
+          className="flex items-center gap-3 text-left focus:outline-none"
+        >
           <div className="h-10 w-10 rounded-full bg-[conic-gradient(from_120deg,_#d7b36c,_#7dd3fc,_#d7b36c)]" />
           <div>
-            {/* <p className="text-xs uppercase tracking-[0.35em] text-[color:var(--muted)]">
-              CineMind
-            </p> */}
             <p className="text-lg font-semibold text-[color:var(--foreground)]">
               CineMind
             </p>
           </div>
-        </div>
+        </button>
         <nav className="hidden items-center justify-center gap-6 text-sm text-[color:var(--muted)] md:flex">
           <button
             onClick={() => setActiveTab("discover")}
@@ -763,76 +1137,6 @@ export default function Home() {
 
       <main className="mx-auto grid w-full max-w-6xl gap-10 px-6 pb-24 pt-12 lg:grid-cols-[320px_1fr]">
         <aside className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-black/40 p-5">
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
-                Search
-              </p>
-              <h2 className="text-lg font-semibold">Find your picks</h2>
-            </div>
-            <input
-              placeholder="Search films, directors, vibes"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
-            />
-            <button
-              onClick={handleSearch}
-              className="w-full cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-110"
-            >
-              {searchLoading ? "Searching..." : "Search"}
-            </button>
-            {searchError ? (
-              <p className="text-xs text-[#ffb4a2]">{searchError}</p>
-            ) : null}
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs text-[color:var(--muted)]">
-              <span className="uppercase tracking-[0.3em]">Results</span>
-              <span>{searchResults.length}</span>
-            </div>
-            <div className="grid gap-3">
-              {searchResults.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-[color:var(--muted)]">
-                  Search to see results.
-                </div>
-              ) : (
-                searchResults.map((item) => (
-                  <div
-                    key={item.tmdb_id}
-                    className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/30 p-3"
-                  >
-                    <div className="h-14 w-10 overflow-hidden rounded-lg bg-gradient-to-br from-[#2a2131] via-[#1c1c2a] to-[#0d0d12]">
-                      {item.poster_url ? (
-                        <img
-                          src={item.poster_url}
-                          alt={item.title}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : null}
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-semibold text-[color:var(--foreground)]">
-                        {item.title}
-                      </p>
-                      <p className="text-xs text-[color:var(--muted)]">
-                        {item.year || "Unknown year"}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => addPick(item)}
-                      disabled={selectedIds.has(item.tmdb_id) || selected.length >= 10}
-                      className="cursor-pointer rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--foreground)] disabled:opacity-40"
-                    >
-                      {selectedIds.has(item.tmdb_id) ? "Added" : "Add"}
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
           <div className="space-y-3">
             <div className="flex items-center justify-between text-xs text-[color:var(--muted)]">
               <span className="uppercase tracking-[0.3em]">Pick Tray</span>
@@ -876,141 +1180,138 @@ export default function Home() {
 
         <div className="flex flex-col gap-14">
           {activeTab === "discover" ? (
-            <section className="grid gap-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--accent)]">
-                    Discover
-                  </p>
-                  <h2 className="text-2xl font-semibold">
-                    {discoverMode === "trending"
-                      ? "Hyped right now"
-                      : discoverMode === "upcoming"
-                        ? "Upcoming releases"
-                        : "Filtered picks"}
-                  </h2>
-                </div>
-                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
-                  <button
-                    type="button"
-                    onClick={() => setDiscoverMode("trending")}
-                    className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
-                      discoverMode === "trending"
-                        ? "bg-[color:var(--accent)] text-black"
-                        : "text-[color:var(--muted)]"
-                    }`}
-                  >
-                    Trending
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDiscoverMode("upcoming")}
-                    className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
-                      discoverMode === "upcoming"
-                        ? "bg-[color:var(--accent)] text-black"
-                        : "text-[color:var(--muted)]"
-                    }`}
-                  >
-                    Upcoming
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDiscoverMode("filtered")}
-                    className={`flex-1 cursor-pointer rounded-full px-3 py-1 transition focus:outline-none focus-visible:outline-none ${
-                      discoverMode === "filtered"
-                        ? "bg-[color:var(--accent)] text-black"
-                        : "text-[color:var(--muted)]"
-                    }`}
-                  >
-                    Filtered
-                  </button>
-                </div>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-                <div className="grid gap-3 md:grid-cols-4">
-                  <input
-                    placeholder="Year from"
-                    value={discoverYearFrom}
-                    onChange={(event) => setDiscoverYearFrom(event.target.value)}
-                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                  <input
-                    placeholder="Year to"
-                    value={discoverYearTo}
-                    onChange={(event) => setDiscoverYearTo(event.target.value)}
-                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                  <input
-                    placeholder="Runtime min"
-                    value={discoverRuntimeMin}
-                    onChange={(event) => setDiscoverRuntimeMin(event.target.value)}
-                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                  <input
-                    placeholder="Runtime max"
-                    value={discoverRuntimeMax}
-                    onChange={(event) => setDiscoverRuntimeMax(event.target.value)}
-                    className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                  <input
-                    placeholder="Cast (comma separated)"
-                    value={discoverCast}
-                    onChange={(event) => setDiscoverCast(event.target.value)}
-                    className="md:col-span-2 rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                  <input
-                    placeholder="Director (comma separated)"
-                    value={discoverDirector}
-                    onChange={(event) => setDiscoverDirector(event.target.value)}
-                    className="md:col-span-2 rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                </div>
-                {discoverGenres.length > 0 ? (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {discoverGenres.map((genre) => {
-                      const active = discoverGenreIds.includes(genre.id);
-                      return (
-                        <button
-                          key={`genre-${genre.id}`}
-                          type="button"
-                          onClick={() => toggleDiscoverGenre(genre.id)}
-                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] transition focus:outline-none focus-visible:outline-none ${
-                            active
-                              ? "border-[color:var(--accent)] text-[color:var(--accent)]"
-                              : "border-white/10 text-[color:var(--muted)]"
-                          }`}
-                        >
-                          {genre.name}
-                        </button>
-                      );
-                    })}
+            <section key="discover" className="grid gap-8 animate-fade-up">
+              <div className="flex flex-col gap-4">
+                <div className="flex w-full justify-center">
+                  <div className="flex w-full max-w-3xl flex-col gap-3 sm:flex-row sm:items-center">
+                    <input
+                      placeholder="Search films, directors, vibes"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      className="w-full flex-1 rounded-2xl border border-white/10 bg-black/30 px-5 py-5 text-base font-semibold text-[color:var(--foreground)] outline-none placeholder:text-[color:var(--muted)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setFiltersOpen((prev) => !prev)}
+                      className="cursor-pointer rounded-2xl border border-white/10 px-5 py-5 text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--foreground)]"
+                    >
+                      {filtersOpen ? "Hide filters" : "Show filters"}
+                    </button>
+                    <button
+                      onClick={handleSearch}
+                      className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-6 py-3.5 text-base font-semibold text-black transition hover:brightness-110"
+                    >
+                      {searchLoading ? "Searching..." : "Search"}
+                    </button>
                   </div>
+                </div>
+                {searchError ? (
+                  <p className="text-xs text-[#ffb4a2]">{searchError}</p>
                 ) : null}
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={applyDiscoverFilters}
-                    className="cursor-pointer rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
-                  >
-                    Apply filters
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetDiscoverFilters}
-                    className="cursor-pointer rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
-                  >
-                    Reset
-                  </button>
+                {searchQueryActive ? (
+                  <p className="text-xs text-[color:var(--muted)]">
+                    Showing {searchResults.length} result{searchResults.length === 1 ? "" : "s"} for "{query.trim()}".
+                  </p>
+                ) : null}
+              </div>
+              <div
+                aria-hidden={!filtersOpen}
+                className={`overflow-hidden rounded-3xl border border-white/10 bg-white/5 transition-all duration-300 ${
+                  filtersOpen
+                    ? "max-h-[560px] opacity-100"
+                    : "max-h-0 opacity-0"
+                }`}
+              >
+                <div className="p-4">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <input
+                      placeholder="Year from"
+                      value={discoverYearFrom}
+                      onChange={(event) => setDiscoverYearFrom(event.target.value)}
+                      className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                    />
+                    <input
+                      placeholder="Year to"
+                      value={discoverYearTo}
+                      onChange={(event) => setDiscoverYearTo(event.target.value)}
+                      className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                    />
+                    <input
+                      placeholder="Runtime min"
+                      value={discoverRuntimeMin}
+                      onChange={(event) => setDiscoverRuntimeMin(event.target.value)}
+                      className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                    />
+                    <input
+                      placeholder="Runtime max"
+                      value={discoverRuntimeMax}
+                      onChange={(event) => setDiscoverRuntimeMax(event.target.value)}
+                      className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                    />
+                    <input
+                      placeholder="Cast (comma separated)"
+                      value={discoverCast}
+                      onChange={(event) => setDiscoverCast(event.target.value)}
+                      className="md:col-span-2 rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                    />
+                    <input
+                      placeholder="Director (comma separated)"
+                      value={discoverDirector}
+                      onChange={(event) => setDiscoverDirector(event.target.value)}
+                      className="md:col-span-2 rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                    />
+                  </div>
+                  {discoverGenres.length > 0 ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {discoverGenres.map((genre) => {
+                        const active = discoverGenreIds.includes(genre.id);
+                        return (
+                          <button
+                            key={`genre-${genre.id}`}
+                            type="button"
+                            onClick={() => toggleDiscoverGenre(genre.id)}
+                            className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] transition focus:outline-none focus-visible:outline-none ${
+                              active
+                                ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                                : "border-white/10 text-[color:var(--muted)]"
+                            }`}
+                          >
+                            {genre.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={applyDiscoverFilters}
+                      className="cursor-pointer rounded-full bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black"
+                    >
+                      Apply filters
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetDiscoverFilters}
+                      className="cursor-pointer rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-[color:var(--foreground)]"
+                    >
+                      Reset
+                    </button>
+                  </div>
                 </div>
               </div>
-              {discoverError ? (
+              {!searchQueryActive && discoverError ? (
                 <p className="text-xs text-[#ffb4a2]">{discoverError}</p>
               ) : null}
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {discoverLoading
-                  ? Array.from({ length: 6 }).map((_, idx) => (
+              <div
+                key={searchQueryActive ? "search" : "discover"}
+                className="grid min-h-[560px] gap-4 sm:grid-cols-2 lg:grid-cols-3"
+              >
+                {searchQueryActive ? (
+                  searchLoading ? (
+                    Array.from({ length: 6 }).map((_, idx) => (
                       <div
-                        key={`discover-${idx}`}
+                        key={`search-loading-${idx}`}
                         className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 p-4"
                       >
                         <div className="aspect-[2/3] rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
@@ -1020,146 +1321,51 @@ export default function Home() {
                         </div>
                       </div>
                     ))
-                  : discoverItems.map((item) => (
-                      <div
-                        key={item.tmdb_id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => addPick(item)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            addPick(item);
-                          }
-                        }}
-                        className="group relative flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 text-left transition hover:border-white/20 hover:bg-white/10 focus:outline-none focus-visible:outline-none"
-                      >
-                        <div className="aspect-[2/3] overflow-hidden rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
-                          {item.poster_url ? (
-                            <img
-                              src={item.poster_url}
-                              alt={item.title}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
-                          ) : null}
-                        </div>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm font-semibold text-[color:var(--foreground)]">
-                              {item.title}
-                            </p>
-                            {selectedIds.has(item.tmdb_id) ? (
-                              <span className="rounded-full border border-white/10 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]">
-                                Added
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="text-xs text-[color:var(--muted)]">
-                            {item.year || "Unknown year"}
-                          </p>
-                          {item.overview ? (
-                            <p className="line-clamp-3 text-xs text-[color:var(--muted)]">
-                              {item.overview}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleLike(item.tmdb_id);
-                            }}
-                            className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] transition focus:outline-none focus-visible:outline-none ${
-                              likedIds[item.tmdb_id]
-                                ? "border-[color:var(--accent)] text-[color:var(--accent)]"
-                                : "border-white/10 text-[color:var(--muted)]"
-                            }`}
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              className="h-3 w-3"
-                              fill={
-                                likedIds[item.tmdb_id]
-                                  ? "currentColor"
-                                  : "none"
-                              }
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M20.8 5.7c-1.5-1.6-4-1.6-5.5 0L12 9l-3.3-3.3c-1.5-1.6-4-1.6-5.5 0-1.8 1.8-1.6 4.6.2 6.3L12 21l8.6-9c1.8-1.7 2-4.5.2-6.3Z" />
-                            </svg>
-                            Like
-                          </button>
-                          <div className="flex items-center gap-1">
-                            {Array.from({ length: 5 }).map((_, idx) => {
-                              const value = idx + 1;
-                              const active = (ratings[item.tmdb_id] || 0) >= value;
-                              return (
-                                <button
-                                  key={`${item.tmdb_id}-rating-${value}`}
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setRating(item.tmdb_id, value);
-                                  }}
-                                  className={`transition focus:outline-none focus-visible:outline-none ${
-                                    active
-                                      ? "text-[color:var(--accent)]"
-                                      : "text-white/30"
-                                  }`}
-                                >
-                                  <svg
-                                    viewBox="0 0 24 24"
-                                    className="h-3.5 w-3.5"
-                                    fill={active ? "currentColor" : "none"}
-                                    stroke="currentColor"
-                                    strokeWidth="1.4"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <path d="M12 3.5 14.6 8l5.1.8-3.7 3.7.9 5.1L12 15.8 7.1 17.6l.9-5.1-3.7-3.7 5.1-.8L12 3.5Z" />
-                                  </svg>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+                  ) : searchResults.length === 0 ? (
+                    <div className="col-span-full rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-[color:var(--muted)]">
+                      No matches yet. Try a different title or clear the search to browse trending.
+                    </div>
+                  ) : (
+                    searchResults.map((item, idx) => (
+                      <div key={`search-${item.tmdb_id}-${idx}`}>
+                        {renderMovieCard(item, "search")}
                       </div>
-                    ))}
+                    ))
+                  )
+                ) : discoverLoading ? (
+                  Array.from({ length: 6 }).map((_, idx) => (
+                    <div
+                      key={`discover-${idx}`}
+                      className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 p-4"
+                    >
+                      <div className="aspect-[2/3] rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]" />
+                      <div className="space-y-2">
+                        <div className="h-3 w-2/3 rounded-full bg-white/10" />
+                        <div className="h-3 w-1/2 rounded-full bg-white/10" />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  discoverItems.map((item, idx) => (
+                    <div key={`discover-${item.tmdb_id}-${idx}`}>
+                      {renderMovieCard(item, "discover")}
+                    </div>
+                  ))
+                )}
               </div>
+              {!searchQueryActive ? (
+                <div className="flex flex-col items-center gap-3">
+                  {discoverLoadingMore ? (
+                    <p className="text-xs text-[color:var(--muted)] animate-fade-in">
+                      Loading more...
+                    </p>
+                  ) : null}
+                  <div ref={discoverSentinelRef} className="h-6 w-full" />
+                </div>
+              ) : null}
             </section>
           ) : (
             <>
-              <section className="grid gap-10">
-            <div className="flex flex-col gap-6">
-            <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--accent)]">
-              Pick 5-10 films
-            </p>
-            <h1 className="font-[var(--font-display)] text-4xl leading-tight text-[color:var(--foreground)] sm:text-5xl">
-              A cinematic brain that learns your taste in minutes.
-            </h1>
-            <p className="max-w-xl text-base leading-relaxed text-[color:var(--muted)]">
-              Choose a handful of movies you love. CineMind builds a moodboard of your taste,
-              blends it with collaborative signals, and returns what you should watch next.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {heroPicks.map((item) => (
-                <span
-                  key={item}
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-[color:var(--foreground)]"
-                >
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-
-              </section>
-
               <section className="grid gap-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -1327,49 +1533,51 @@ export default function Home() {
               </section>
 
               <section className="grid gap-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
-                  Seed Picks
-                </p>
-                <h3 className="text-xl font-semibold">Taste-Based Results</h3>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  value={seedYearFrom}
-                  onChange={(event) => setSeedYearFrom(event.target.value)}
-                  placeholder="Year from"
-                  className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                />
-                <input
-                  value={seedYearTo}
-                  onChange={(event) => setSeedYearTo(event.target.value)}
-                  placeholder="Year to"
-                  className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                />
-                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
-                <button
-                  onClick={() => setSeedMode("hybrid")}
-                  disabled={seedLoading}
-                  className={`cursor-pointer rounded-full px-3 py-1 ${
-                    seedMode === "hybrid"
-                      ? "bg-[color:var(--accent)] text-black"
-                      : "text-[color:var(--muted)]"
-                  }`}
-                >
-                  Hybrid
-                </button>
-                <button
-                  onClick={() => setSeedMode("content")}
-                  disabled={seedLoading}
-                  className={`cursor-pointer rounded-full px-3 py-1 ${
-                    seedMode === "content"
-                      ? "bg-[color:var(--accent)] text-black"
-                      : "text-[color:var(--muted)]"
-                  }`}
-                >
-                  Content
-                </button>
+            <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                    Seed Picks
+                  </p>
+                  <h3 className="text-xl font-semibold">Taste-Based Results</h3>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={seedYearFrom}
+                    onChange={(event) => setSeedYearFrom(event.target.value)}
+                    placeholder="Year from"
+                    className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <input
+                    value={seedYearTo}
+                    onChange={(event) => setSeedYearTo(event.target.value)}
+                    placeholder="Year to"
+                    className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
+                  />
+                  <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">
+                  <button
+                    onClick={() => setSeedMode("hybrid")}
+                    disabled={seedLoading}
+                    className={`cursor-pointer rounded-full px-3 py-1 ${
+                      seedMode === "hybrid"
+                        ? "bg-[color:var(--accent)] text-black"
+                        : "text-[color:var(--muted)]"
+                    }`}
+                  >
+                    Hybrid
+                  </button>
+                  <button
+                    onClick={() => setSeedMode("content")}
+                    disabled={seedLoading}
+                    className={`cursor-pointer rounded-full px-3 py-1 ${
+                      seedMode === "content"
+                        ? "bg-[color:var(--accent)] text-black"
+                        : "text-[color:var(--muted)]"
+                    }`}
+                  >
+                    Content
+                  </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1438,6 +1646,153 @@ export default function Home() {
           )}
         </div>
       </main>
+      {expandedMovieId ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4 py-10 backdrop-blur-sm animate-fade-in">
+          <button
+            type="button"
+            aria-label="Close details"
+            onClick={() => setExpandedMovieId(null)}
+            className="absolute inset-0 cursor-pointer"
+          />
+          <div className="relative z-50 w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-[#0f0f16] shadow-[0_30px_80px_rgba(0,0,0,0.6)] animate-scale-in">
+            <div className="grid gap-6 p-6 md:grid-cols-[240px_1fr]">
+              <div className="aspect-[2/3] overflow-hidden rounded-2xl bg-gradient-to-br from-[#241c2b] via-[#17232d] to-[#101015]">
+                {movieById.get(expandedMovieId)?.poster_url ? (
+                  <img
+                    src={movieById.get(expandedMovieId)?.poster_url || ""}
+                    alt={movieById.get(expandedMovieId)?.title || "Movie poster"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : null}
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--accent)]">
+                      Movie details
+                    </p>
+                    <h3 className="text-2xl font-semibold text-[color:var(--foreground)]">
+                      {movieById.get(expandedMovieId)?.title || "Selected movie"}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedMovieId(null)}
+                    className="rounded-full border border-white/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
+                  >
+                    Close
+                  </button>
+                </div>
+                <p className="text-xs text-[color:var(--muted)]">
+                  {movieById.get(expandedMovieId)?.year || "Unknown year"}
+                </p>
+                <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-sm text-[color:var(--muted)]">
+                  {detailsLoadingId === expandedMovieId ? (
+                    <p>Loading details...</p>
+                  ) : detailsErrors[expandedMovieId] ? (
+                    <p>{detailsErrors[expandedMovieId]}</p>
+                  ) : detailsById[expandedMovieId] ? (
+                    <div className="grid gap-3">
+                      {detailsById[expandedMovieId]?.overview ? (
+                        <p className="text-[color:var(--foreground)]">
+                          {detailsById[expandedMovieId]?.overview}
+                        </p>
+                      ) : null}
+                      {detailsById[expandedMovieId]?.year ? (
+                        <p>Year: {detailsById[expandedMovieId]?.year}</p>
+                      ) : null}
+                      {detailsById[expandedMovieId]?.runtime ? (
+                        <p>Runtime: {detailsById[expandedMovieId]?.runtime} min</p>
+                      ) : null}
+                      {detailsById[expandedMovieId]?.director ? (
+                        <p>Director: {detailsById[expandedMovieId]?.director}</p>
+                      ) : null}
+                      {detailsById[expandedMovieId]?.cast?.length ? (
+                        <p>Cast: {detailsById[expandedMovieId]?.cast?.slice(0, 8).join(", ")}</p>
+                      ) : null}
+                      {detailsById[expandedMovieId]?.genres?.length ? (
+                        <p>Genres: {detailsById[expandedMovieId]?.genres?.join(", ")}</p>
+                      ) : null}
+                      {detailsById[expandedMovieId]?.keywords?.length ? (
+                        <p>Keywords: {detailsById[expandedMovieId]?.keywords?.slice(0, 8).join(", ")}</p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p>Details unavailable.</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const movie = movieById.get(expandedMovieId);
+                      if (movie) addPick(movie);
+                    }}
+                    disabled={selectedIds.has(expandedMovieId) || selected.length >= 10}
+                    className="cursor-pointer rounded-2xl bg-[color:var(--accent)] px-4 py-2 text-xs font-semibold text-black disabled:opacity-40"
+                  >
+                    {selectedIds.has(expandedMovieId) ? "Added" : "Add to pick tray"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleLike(expandedMovieId)}
+                    className={`cursor-heart rounded-2xl border px-4 py-2 text-xs font-semibold ${
+                      likedIds[expandedMovieId]
+                        ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                        : "border-white/10 text-[color:var(--foreground)]"
+                    }`}
+                  >
+                    {likedIds[expandedMovieId] ? "Liked" : "Like"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {infoOpen ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4 py-10 backdrop-blur-sm animate-fade-in">
+          <button
+            type="button"
+            aria-label="Close info"
+            onClick={() => setInfoOpen(false)}
+            className="absolute inset-0 cursor-pointer"
+          />
+          <div className="relative z-50 w-full max-w-2xl overflow-hidden rounded-3xl border border-white/10 bg-[#0f0f16] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.6)] animate-scale-in">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--accent)]">
+                  CineMind
+                </p>
+                <h3 className="text-2xl font-semibold text-[color:var(--foreground)]">
+                  A cinematic brain that learns your taste in minutes.
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInfoOpen(false)}
+                className="rounded-full border border-white/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]"
+              >
+                Close
+              </button>
+            </div>
+            <p className="mt-4 text-sm leading-relaxed text-[color:var(--muted)]">
+              Choose a handful of movies you love. CineMind builds a moodboard of your taste,
+              blends it with collaborative signals, and returns what you should watch next.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {heroPicks.map((item) => (
+                <span
+                  key={`info-${item}`}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-[color:var(--foreground)]"
+                >
+                  {item}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

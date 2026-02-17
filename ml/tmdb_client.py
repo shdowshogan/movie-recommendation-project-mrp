@@ -61,7 +61,8 @@ class TMDBClient:
         data = self._get("/genre/movie/list")
         return data.get("genres", [])
 
-    def discover_movies(self, **params: Any) -> list[dict[str, Any]]:
+    def discover_movies(self, page: int = 1, **params: Any) -> list[dict[str, Any]]:
+        params["page"] = page
         data = self._get("/discover/movie", **params)
         return data.get("results", [])
 
@@ -74,12 +75,12 @@ class TMDBClient:
     def movie_keywords(self, tmdb_id: int) -> dict[str, Any]:
         return self._get(f"/movie/{tmdb_id}/keywords")
 
-    def trending_movies(self, window: str = "week") -> list[dict[str, Any]]:
-        data = self._get(f"/trending/movie/{window}")
+    def trending_movies(self, window: str = "week", page: int = 1) -> list[dict[str, Any]]:
+        data = self._get(f"/trending/movie/{window}", page=page)
         return data.get("results", [])
 
-    def upcoming_movies(self) -> list[dict[str, Any]]:
-        data = self._get("/movie/upcoming")
+    def upcoming_movies(self, page: int = 1) -> list[dict[str, Any]]:
+        data = self._get("/movie/upcoming", page=page)
         return data.get("results", [])
 
     def fetch_movie_bundle(self, tmdb_id: int, cast_limit: int = 10) -> dict[str, Any]:
@@ -106,6 +107,7 @@ class TMDBClient:
         return {
             "title": details.get("title") or "",
             "release_date": details.get("release_date"),
+            "runtime": details.get("runtime"),
             "genres": genres,
             "cast": cast,
             "director": director,

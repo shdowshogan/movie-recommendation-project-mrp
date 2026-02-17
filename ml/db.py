@@ -50,6 +50,16 @@ users = Table(
     Column("updated_at", DateTime, nullable=False, default=datetime.utcnow),
 )
 
+user_preferences = Table(
+    "user_preferences",
+    metadata,
+    Column("user_id", Integer, primary_key=True),
+    Column("liked_ids", JSONB, nullable=False, default=list),
+    Column("ratings", JSONB, nullable=False, default=dict),
+    Column("pick_tray", JSONB, nullable=False, default=list),
+    Column("updated_at", DateTime, nullable=False, default=datetime.utcnow),
+)
+
 
 def get_db_url() -> str:
     db_url = os.getenv("MLR_DB_URL")

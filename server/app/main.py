@@ -14,7 +14,14 @@ from ml.inference.content import ContentRecommender
 from ml.inference.hybrid import HybridConfig, HybridRecommender
 from ml.inference.recommender import CFRecommender
 from ml.config import MOVIES_FILE, RATINGS_FILE
-from ml.db import get_engine, init_db, movielens_tmdb_map, tmdb_movies, users
+from ml.db import (
+    get_engine,
+    init_db,
+    movielens_tmdb_map,
+    tmdb_movies,
+    user_preferences,
+    users,
+)
 from ml.training.io import get_user_ratings as get_user_ratings_rows
 from ml.tmdb_client import TMDBClient
 from sqlalchemy import insert, select
@@ -82,6 +89,18 @@ class BrowseResult(BaseModel):
     overview: str | None = None
 
 
+class MovieBundle(BaseModel):
+    tmdb_id: int
+    title: str
+    year: str | None = None
+    overview: str | None = None
+    runtime: int | None = None
+    genres: list[str]
+    cast: list[str]
+    director: str | None = None
+    keywords: list[str]
+
+
 class GenreResult(BaseModel):
     id: int
     name: str
@@ -146,6 +165,19 @@ class UserOut(BaseModel):
 
 class AuthResponse(BaseModel):
     user: UserOut
+
+
+class PickTrayItem(BaseModel):
+    tmdb_id: int
+    title: str
+    year: str | None = None
+    poster_url: str | None = None
+
+
+class UserPreferences(BaseModel):
+    liked_ids: list[int] = Field(default_factory=list)
+    ratings: dict[str, float] = Field(default_factory=dict)
+    pick_tray: list[PickTrayItem] = Field(default_factory=list)
 
 
 def _init_model() -> CFRecommender:
@@ -229,6 +261,21 @@ def _get_user_by_id(user_id: int) -> UserOut | None:
     with _ENGINE.begin() as conn:
         row = conn.execute(select(users).where(users.c.id == user_id)).first()
     return _user_from_row(row) if row else None
+
+
+def _require_user(access_token: str | None) -> UserOut:
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(access_token, _AUTH_SECRET, algorithms=[_AUTH_ALG])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = _get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
 
 
 def _map_movielens_to_tmdb(movie_ids: list[str]) -> dict[str, int]:
@@ -389,18 +436,61 @@ def logout(response: Response) -> dict[str, str]:
 
 @app.get("/auth/me", response_model=AuthResponse)
 def me(access_token: str | None = Cookie(default=None, alias=_AUTH_COOKIE_NAME)) -> AuthResponse:
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = jwt.decode(access_token, _AUTH_SECRET, algorithms=[_AUTH_ALG])
-        user_id = int(payload.get("sub"))
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = _get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+    user = _require_user(access_token)
     return AuthResponse(user=user)
+
+
+@app.get("/users/me/preferences", response_model=UserPreferences)
+def get_user_preferences(
+    access_token: str | None = Cookie(default=None, alias=_AUTH_COOKIE_NAME),
+) -> UserPreferences:
+    if _ENGINE is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    user = _require_user(access_token)
+    with _ENGINE.begin() as conn:
+        row = conn.execute(
+            select(user_preferences).where(user_preferences.c.user_id == user.id)
+        ).first()
+    if not row:
+        return UserPreferences()
+    data = row._mapping
+    return UserPreferences(
+        liked_ids=data.get("liked_ids") or [],
+        ratings=data.get("ratings") or {},
+        pick_tray=data.get("pick_tray") or [],
+    )
+
+
+@app.put("/users/me/preferences", response_model=UserPreferences)
+def set_user_preferences(
+    payload: UserPreferences,
+    access_token: str | None = Cookie(default=None, alias=_AUTH_COOKIE_NAME),
+) -> UserPreferences:
+    if _ENGINE is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    user = _require_user(access_token)
+    values = {
+        "user_id": user.id,
+        "liked_ids": payload.liked_ids,
+        "ratings": payload.ratings,
+        "pick_tray": [item.model_dump() for item in payload.pick_tray],
+        "updated_at": datetime.now(timezone.utc),
+    }
+    with _ENGINE.begin() as conn:
+        exists = conn.execute(
+            select(user_preferences.c.user_id).where(
+                user_preferences.c.user_id == user.id
+            )
+        ).first()
+        if exists:
+            conn.execute(
+                user_preferences.update()
+                .where(user_preferences.c.user_id == user.id)
+                .values(**values)
+            )
+        else:
+            conn.execute(user_preferences.insert().values(**values))
+    return payload
 
 
 @app.get("/tmdb/search", response_model=list[SearchResult])
@@ -435,11 +525,12 @@ def search_tmdb(
 def get_trending_movies(
     limit: int = Query(12, ge=1, le=40),
     window: str = Query("week", pattern="^(day|week)$"),
+    page: int = Query(1, ge=1),
 ) -> list[BrowseResult]:
     if _TMDB is None:
         raise HTTPException(status_code=503, detail="TMDB API key not configured")
 
-    results = _TMDB.trending_movies(window=window)
+    results = _TMDB.trending_movies(window=window, page=page)
     payload: list[BrowseResult] = []
     for item in results[:limit]:
         release_date = item.get("release_date") or ""
@@ -463,11 +554,12 @@ def get_trending_movies(
 @app.get("/tmdb/upcoming", response_model=list[BrowseResult])
 def get_upcoming_movies(
     limit: int = Query(12, ge=1, le=40),
+    page: int = Query(1, ge=1),
 ) -> list[BrowseResult]:
     if _TMDB is None:
         raise HTTPException(status_code=503, detail="TMDB API key not configured")
 
-    results = _TMDB.upcoming_movies()
+    results = _TMDB.upcoming_movies(page=page)
     payload: list[BrowseResult] = []
     for item in results[:limit]:
         release_date = item.get("release_date") or ""
@@ -499,6 +591,7 @@ def get_genres() -> list[GenreResult]:
 @app.get("/tmdb/discover", response_model=list[BrowseResult])
 def discover_movies(
     limit: int = Query(12, ge=1, le=40),
+    page: int = Query(1, ge=1),
     year_from: int | None = Query(None, ge=1870, le=2100),
     year_to: int | None = Query(None, ge=1870, le=2100),
     runtime_min: int | None = Query(None, ge=0, le=600),
@@ -548,7 +641,7 @@ def discover_movies(
         if director_ids:
             params["with_crew"] = ",".join(director_ids)
 
-    results = _TMDB.discover_movies(**params)
+    results = _TMDB.discover_movies(page=page, **params)
     payload: list[BrowseResult] = []
     for item in results[:limit]:
         release_date = item.get("release_date") or ""
@@ -567,6 +660,26 @@ def discover_movies(
             )
         )
     return payload
+
+
+@app.get("/tmdb/bundle/{tmdb_id}", response_model=MovieBundle)
+def get_movie_bundle(tmdb_id: int) -> MovieBundle:
+    if _TMDB is None:
+        raise HTTPException(status_code=503, detail="TMDB API key not configured")
+    bundle = _TMDB.fetch_movie_bundle(tmdb_id)
+    release_date = bundle.get("release_date") or ""
+    year = release_date.split("-")[0] if release_date else None
+    return MovieBundle(
+        tmdb_id=tmdb_id,
+        title=bundle.get("title") or "",
+        year=year,
+        overview=bundle.get("overview"),
+        runtime=bundle.get("runtime"),
+        genres=bundle.get("genres") or [],
+        cast=bundle.get("cast") or [],
+        director=bundle.get("director"),
+        keywords=bundle.get("keywords") or [],
+    )
 
 
 @app.get("/users/{user_id}/ratings", response_model=list[UserRating])
