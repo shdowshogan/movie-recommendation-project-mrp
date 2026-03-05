@@ -11,17 +11,11 @@ Recommended production setup:
 
 ---
 
-## 1) Backend deploy on Render
+## 1) Backend deploy on Render (No Blueprint required)
 
-### Quick option (Blueprint)
-If your repo is connected to Render, you can use the included `render.yaml` to provision backend + database automatically.
+Use this manual setup if Blueprint is paid/unavailable on your plan.
 
-1. In Render, choose **New +** -> **Blueprint**.
-2. Select this repository.
-3. Set secret env vars when prompted (`TMDB_API_KEY`, `CORS_ALLOW_ORIGINS`).
-4. Deploy.
-
-You can still use the manual setup below if you prefer full control.
+If Blueprint is available later, you can optionally use `render.yaml`, but it is not required.
 
 ### A. Create PostgreSQL database
 1. In Render, create a new **PostgreSQL** instance.
