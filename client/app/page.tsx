@@ -83,7 +83,7 @@ const picks = [
 ];
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 const USER_ID_MAX = 138493;
 
 export default function Home() {
@@ -129,8 +129,7 @@ export default function Home() {
   const [hybridLoading, setHybridLoading] = useState(false);
   const [hybridResults, setHybridResults] = useState<HybridRec[]>([]);
   const [hybridError, setHybridError] = useState<string | null>(null);
-  const [hybridYearFrom, setHybridYearFrom] = useState("");
-  const [hybridYearTo, setHybridYearTo] = useState("");
+  const [hybridYear, setHybridYear] = useState("");
   const [likedLoading, setLikedLoading] = useState(false);
   const [likedMovies, setLikedMovies] = useState<UserLikedMovie[]>([]);
   const [likedError, setLikedError] = useState<string | null>(null);
@@ -140,8 +139,7 @@ export default function Home() {
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedMode, setSeedMode] = useState<"hybrid" | "content">("hybrid");
   const [seedGenerated, setSeedGenerated] = useState(false);
-  const [seedYearFrom, setSeedYearFrom] = useState("");
-  const [seedYearTo, setSeedYearTo] = useState("");
+  const [seedYear, setSeedYear] = useState("");
 
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -156,6 +154,9 @@ export default function Home() {
   const [infoOpen, setInfoOpen] = useState(false);
   const prefsHydratingRef = useRef(false);
   const prefsSaveTimerRef = useRef<number | null>(null);
+  const [likesOpen, setLikesOpen] = useState(false);
+  const [ratingsOpen, setRatingsOpen] = useState(false);
+  const [libraryLoading, setLibraryLoading] = useState(false);
 
   const passwordTooShort = authPassword.length > 0 && authPassword.length < 8;
 
@@ -178,6 +179,16 @@ export default function Home() {
     }
     return map;
   }, [discoverItems, searchResults]);
+
+  const likedIdList = useMemo(
+    () => Object.keys(likedIds).filter((key) => likedIds[Number(key)]).map(Number),
+    [likedIds]
+  );
+
+  const ratedIdList = useMemo(
+    () => Object.keys(ratings).map(Number).filter((id) => ratings[id] > 0),
+    [ratings]
+  );
 
   const discoverFiltersKey = useMemo(
     () =>
@@ -464,6 +475,13 @@ export default function Home() {
   }, [profileOpen]);
 
   useEffect(() => {
+    if (!likesOpen && !ratingsOpen) return;
+    const ids = Array.from(new Set([...likedIdList, ...ratedIdList]));
+    if (ids.length === 0) return;
+    loadLibraryDetails(ids);
+  }, [likesOpen, ratingsOpen, likedIdList, ratedIdList]);
+
+  useEffect(() => {
     if (activeTab !== "discover") return;
     if (searchQueryActive) return;
     if (!discoverHasMore) return;
@@ -577,6 +595,34 @@ export default function Home() {
     }
   };
 
+  const loadLibraryDetails = async (ids: number[]) => {
+    const missing = ids.filter((id) => !detailsById[id]);
+    if (missing.length === 0) return;
+    setLibraryLoading(true);
+    try {
+      const results = await Promise.all(
+        missing.map(async (id) => {
+          try {
+            const resp = await fetch(`${API_BASE}/tmdb/bundle/${id}`);
+            if (!resp.ok) return null;
+            return (await resp.json()) as MovieDetails;
+          } catch (err) {
+            return null;
+          }
+        })
+      );
+      setDetailsById((prev) => {
+        const next = { ...prev };
+        results.forEach((item) => {
+          if (item) next[item.tmdb_id] = item;
+        });
+        return next;
+      });
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
   const toggleExpandedMovie = (tmdbId: number) => {
     setExpandedMovieId((prev) => {
       const next = prev === tmdbId ? null : tmdbId;
@@ -597,11 +643,9 @@ export default function Home() {
     setHybridError(null);
     try {
       const params = new URLSearchParams({ n: "10", include_titles: "true" });
-      if (hybridYearFrom.trim()) {
-        params.set("year_from", hybridYearFrom.trim());
-      }
-      if (hybridYearTo.trim()) {
-        params.set("year_to", hybridYearTo.trim());
+      if (hybridYear.trim()) {
+        params.set("year_from", hybridYear.trim());
+        params.set("year_to", hybridYear.trim());
       }
       const resp = await fetch(
         `${API_BASE}/recommendations/hybrid/${resolvedUserId}?${params.toString()}`
@@ -670,11 +714,9 @@ export default function Home() {
           ? `${API_BASE}/recommendations/seed-hybrid`
           : `${API_BASE}/recommendations/seed`;
       const params = new URLSearchParams();
-      if (seedYearFrom.trim()) {
-        params.set("year_from", seedYearFrom.trim());
-      }
-      if (seedYearTo.trim()) {
-        params.set("year_to", seedYearTo.trim());
+      if (seedYear.trim()) {
+        params.set("year_from", seedYear.trim());
+        params.set("year_to", seedYear.trim());
       }
       const endpoint = params.toString()
         ? `${endpointBase}?${params.toString()}`
@@ -874,8 +916,8 @@ export default function Home() {
             </p>
           ) : null}
         </div>
-        {source === "discover" ? (
-          <div className="mt-auto flex items-center justify-between gap-3">
+        <div className="mt-auto flex items-center justify-between gap-3">
+          {source === "discover" ? (
             <button
               type="button"
               onClick={(event) => {
@@ -901,39 +943,43 @@ export default function Home() {
               </svg>
               Like
             </button>
-            <div className="flex items-center gap-1">
-              {Array.from({ length: 5 }).map((_, idx) => {
-                const value = idx + 1;
-                const active = (ratings[item.tmdb_id] || 0) >= value;
-                return (
-                  <button
-                    key={`${item.tmdb_id}-rating-${value}`}
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setRating(item.tmdb_id, value);
-                    }}
-                    className={`transition focus:outline-none focus-visible:outline-none ${
-                      active ? "text-[color:var(--accent)]" : "text-white/30"
-                    }`}
+          ) : (
+            <span className="text-[10px] uppercase tracking-[0.2em] text-[color:var(--muted)]">
+              Rate
+            </span>
+          )}
+          <div className="flex items-center gap-1">
+            {Array.from({ length: 5 }).map((_, idx) => {
+              const value = idx + 1;
+              const active = (ratings[item.tmdb_id] || 0) >= value;
+              return (
+                <button
+                  key={`${item.tmdb_id}-rating-${value}`}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setRating(item.tmdb_id, value);
+                  }}
+                  className={`transition focus:outline-none focus-visible:outline-none ${
+                    active ? "text-[color:var(--accent)]" : "text-white/30"
+                  }`}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5"
+                    fill={active ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-3.5 w-3.5"
-                      fill={active ? "currentColor" : "none"}
-                      stroke="currentColor"
-                      strokeWidth="1.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M12 3.5 14.6 8l5.1.8-3.7 3.7.9 5.1L12 15.8 7.1 17.6l.9-5.1-3.7-3.7 5.1-.8L12 3.5Z" />
-                    </svg>
-                  </button>
-                );
-              })}
-            </div>
+                    <path d="M12 3.5 14.6 8l5.1.8-3.7 3.7.9 5.1L12 15.8 7.1 17.6l.9-5.1-3.7-3.7 5.1-.8L12 3.5Z" />
+                  </svg>
+                </button>
+              );
+            })}
           </div>
-        ) : null}
+        </div>
       </div>
     );
   };
@@ -1382,15 +1428,9 @@ export default function Home() {
                 className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
               />
               <input
-                value={hybridYearFrom}
-                onChange={(event) => setHybridYearFrom(event.target.value)}
-                placeholder="Year from"
-                className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
-              />
-              <input
-                value={hybridYearTo}
-                onChange={(event) => setHybridYearTo(event.target.value)}
-                placeholder="Year to"
+                value={hybridYear}
+                onChange={(event) => setHybridYear(event.target.value)}
+                placeholder="Year"
                 className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-xs text-[color:var(--foreground)]"
               />
               <button
@@ -1469,6 +1509,117 @@ export default function Home() {
                     </div>
                   ))}
           </div>
+          <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--muted)]">
+                  Your Library
+                </p>
+                <h3 className="text-xl font-semibold">Likes & Ratings</h3>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLikesOpen((prev) => !prev)}
+                  className={`cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold ${
+                    likesOpen
+                      ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                      : "border-white/10 text-[color:var(--foreground)]"
+                  }`}
+                >
+                  Likes ({likedIdList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRatingsOpen((prev) => !prev)}
+                  className={`cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold ${
+                    ratingsOpen
+                      ? "border-[color:var(--accent)] text-[color:var(--accent)]"
+                      : "border-white/10 text-[color:var(--foreground)]"
+                  }`}
+                >
+                  Ratings ({ratedIdList.length})
+                </button>
+              </div>
+            </div>
+            {libraryLoading ? (
+              <p className="mt-3 text-xs text-[color:var(--muted)]">Loading library...</p>
+            ) : null}
+            {likesOpen ? (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {likedIdList.length === 0 ? (
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-[color:var(--muted)]">
+                    No liked movies yet.
+                  </div>
+                ) : (
+                  likedIdList.map((id) => {
+                    const item = detailsById[id];
+                    return (
+                      <div
+                        key={`like-${id}`}
+                        className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 p-3"
+                      >
+                        <div className="h-14 w-10 overflow-hidden rounded-lg bg-gradient-to-br from-[#2a2131] via-[#1c1c2a] to-[#0d0d12]">
+                          {movieById.get(id)?.poster_url ? (
+                            <img
+                              src={movieById.get(id)?.poster_url || ""}
+                              alt={item?.title || "Movie"}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">
+                            {item?.title || movieById.get(id)?.title || `Movie ${id}`}
+                          </p>
+                          <p className="text-xs text-[color:var(--muted)]">
+                            {item?.year || movieById.get(id)?.year || "Unknown year"}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : null}
+            {ratingsOpen ? (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {ratedIdList.length === 0 ? (
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-[color:var(--muted)]">
+                    No rated movies yet.
+                  </div>
+                ) : (
+                  ratedIdList.map((id) => {
+                    const item = detailsById[id];
+                    return (
+                      <div
+                        key={`rating-${id}`}
+                        className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 p-3"
+                      >
+                        <div className="h-14 w-10 overflow-hidden rounded-lg bg-gradient-to-br from-[#2a2131] via-[#1c1c2a] to-[#0d0d12]">
+                          {movieById.get(id)?.poster_url ? (
+                            <img
+                              src={movieById.get(id)?.poster_url || ""}
+                              alt={item?.title || "Movie"}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">
+                            {item?.title || movieById.get(id)?.title || `Movie ${id}`}
+                          </p>
+                          <p className="text-xs text-[color:var(--muted)]">
+                            Rated {ratings[id]} / 5
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : null}
+          </div>
           {hybridError ? (
             <p className="text-xs text-[#ffb4a2]">{hybridError}</p>
           ) : null}
@@ -1543,15 +1694,9 @@ export default function Home() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <input
-                    value={seedYearFrom}
-                    onChange={(event) => setSeedYearFrom(event.target.value)}
-                    placeholder="Year from"
-                    className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
-                  />
-                  <input
-                    value={seedYearTo}
-                    onChange={(event) => setSeedYearTo(event.target.value)}
-                    placeholder="Year to"
+                    value={seedYear}
+                    onChange={(event) => setSeedYear(event.target.value)}
+                    placeholder="Year"
                     className="rounded-full border border-white/10 bg-black/30 px-3 py-2 text-xs text-[color:var(--foreground)]"
                   />
                   <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 text-[10px] uppercase tracking-[0.2em]">

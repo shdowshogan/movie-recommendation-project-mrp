@@ -27,15 +27,13 @@ from ml.tmdb_client import TMDBClient
 from sqlalchemy import insert, select
 from sklearn.preprocessing import normalize
 
-app = FastAPI(title="CineMind API", version="0.1.0")
+def _parse_csv_env(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+app = FastAPI(title="CineMind API", version="0.1.0")
 
 _MODEL: CFRecommender | None = None
 _HYBRID: HybridRecommender | None = None
@@ -52,7 +50,27 @@ _AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "false").lower() in {
     "true",
     "yes",
 }
+_AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax").lower()
+if _AUTH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    _AUTH_COOKIE_SAMESITE = "lax"
+_CORS_ALLOW_ORIGINS = _parse_csv_env(os.getenv("CORS_ALLOW_ORIGINS")) or [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+if "*" in _CORS_ALLOW_ORIGINS:
+    _CORS_ALLOW_ORIGINS = [origin for origin in _CORS_ALLOW_ORIGINS if origin != "*"]
+_CORS_ALLOW_ORIGIN_REGEX = os.getenv("CORS_ALLOW_ORIGIN_REGEX")
 _PWD_CONTEXT = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ALLOW_ORIGINS,
+    allow_origin_regex=_CORS_ALLOW_ORIGIN_REGEX,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class Recommendation(BaseModel):
@@ -232,7 +250,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
         value=token,
         httponly=True,
         secure=_AUTH_COOKIE_SECURE,
-        samesite="lax",
+        samesite=_AUTH_COOKIE_SAMESITE,
         max_age=_AUTH_EXPIRE_MINUTES * 60,
         path="/",
     )
