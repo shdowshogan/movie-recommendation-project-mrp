@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -40,6 +41,7 @@ _HYBRID: HybridRecommender | None = None
 _TMDB: TMDBClient | None = None
 _ENGINE = None
 _POSTER_CACHE: dict[int, str | None] = {}
+_LOGGER = logging.getLogger(__name__)
 
 _AUTH_COOKIE_NAME = "access_token"
 _AUTH_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
@@ -377,19 +379,25 @@ def _apply_year_filter(
 
 @app.on_event("startup")
 def load_model() -> None:
-    global _MODEL, _HYBRID, _TMDB
-    _MODEL = _init_model()
-    _HYBRID = _init_hybrid(_MODEL)
+    global _MODEL, _HYBRID, _TMDB, _ENGINE
+    try:
+        _MODEL = _init_model()
+        _HYBRID = _init_hybrid(_MODEL)
+    except Exception as exc:
+        _LOGGER.warning("ML models unavailable at startup: %s", exc)
+        _MODEL = None
+        _HYBRID = None
     try:
         _TMDB = TMDBClient.from_env()
-    except RuntimeError:
+    except RuntimeError as exc:
+        _LOGGER.warning("TMDB client unavailable at startup: %s", exc)
         _TMDB = None
     try:
-        global _ENGINE
         _ENGINE = get_engine()
         if os.getenv("MLR_DB_INIT", "true").lower() in {"1", "true", "yes"}:
             init_db(_ENGINE)
-    except RuntimeError:
+    except RuntimeError as exc:
+        _LOGGER.warning("Database unavailable at startup: %s", exc)
         _ENGINE = None
 
 
@@ -713,8 +721,8 @@ def get_user_liked_movies(
             movies_path=MOVIES_FILE,
             limit=None,
         )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    except FileNotFoundError:
+        return []
 
     filtered = [row for row in rows if float(row.get("rating", 0)) >= min_rating]
     filtered = filtered[:limit]
